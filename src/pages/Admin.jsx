@@ -11,6 +11,7 @@ import { Badge, Field, Modal, Spinner } from '../components/ui.jsx'
 import ProductArt from '../components/ProductArt.jsx'
 import { OrderView } from './Order.jsx'
 import { INFO_FIELDS, BANK_FIELDS, normalizeInfo } from '../lib/shopInfo.js'
+import AdminChat, { useChatUnread } from './AdminChat.jsx'
 
 function useOrders() {
   const [list, setList] = useState(null)
@@ -590,6 +591,11 @@ function StoreForm({ value, onClose, onSaved }) {
   )
 }
 
+function ChatTab() {
+  const n = useChatUnread()
+  return <NavLink to="/quan-tri/tin-nhan">Tin nhắn{n > 0 && <span className="pill bad">{n}</span>}</NavLink>
+}
+
 export default function Admin() {
   const { user, toast, reloadProducts } = useShop()
   if (user === undefined) return <div className="container pad-l"><Spinner /></div>
@@ -607,6 +613,7 @@ export default function Admin() {
         <NavLink to="/quan-tri/san-pham">Sản phẩm</NavLink>
         <NavLink to="/quan-tri/gia-nhap">Tính giá nhập</NavLink>
         <NavLink to="/quan-tri/khach-hang">Khách hàng</NavLink>
+        <ChatTab />
         <NavLink to="/quan-tri/cai-dat">Cài đặt cửa hàng</NavLink>
         <NavLink to="/quan-tri/sao-luu">Sao lưu</NavLink>
       </nav>
@@ -616,6 +623,7 @@ export default function Admin() {
         <Route path="san-pham" element={<Products />} />
         <Route path="gia-nhap" element={<ImportCalc />} />
         <Route path="khach-hang" element={<Customers />} />
+        <Route path="tin-nhan" element={<AdminChat />} />
         <Route path="cai-dat" element={<ShopSettings />} />
         <Route path="sao-luu" element={<Backup />} />
       </Routes>
