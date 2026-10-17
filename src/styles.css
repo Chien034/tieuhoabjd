@@ -300,6 +300,20 @@ input, select, textarea { font: inherit; color: inherit; }
 .size-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .size-list button { min-width: 48px; padding: 8px 10px; border: 1.5px solid var(--line); background: #fff; border-radius: 8px; font-weight: 600; }
 .size-list button.on { border-color: var(--navy); background: var(--navy); color: #fff; }
+.price .now .from { font-size: .55em; font-weight: 600; color: var(--muted); }
+.sizes.variants { margin-top: 10px; }
+.variant-list button { display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 12px 6px 6px; }
+.variant-list button:not(:has(img)) { padding-left: 12px; }
+.variant-list button img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
+.variant-list button span { display: flex; flex-direction: column; line-height: 1.25; }
+.variant-list button small { font-weight: 500; color: var(--red); }
+.variant-list button.on small { color: inherit; opacity: .9; }
+.variant-list button:disabled { opacity: .45; cursor: not-allowed; }
+.main-img.is-video { cursor: default; background: #000; }
+.main-img .video { width: 100%; height: 100%; display: block; object-fit: contain; border: 0; background: #000; }
+.video-thumb { position: relative; display: block; width: 100%; height: 100%; background: #000; }
+.video-thumb img, .video-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .85; }
+.video-thumb i { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-style: normal; font-size: 22px; text-shadow: 0 1px 4px rgba(0, 0, 0, .6); }
 .qty { display: inline-flex; border: 1.5px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
 .qty button { width: 34px; border: 0; background: #f6f7f9; font-size: 18px; }
 .qty input { width: 42px; text-align: center; border: 0; padding: 7px 0; }
@@ -560,6 +574,20 @@ input, select, textarea { font: inherit; color: inherit; }
 .img-tools button { background: none; border: 0; color: #fff; padding: 3px 8px; font-size: 12px; }
 .img-add { width: 110px; height: 110px; border: 2px dashed var(--gold-2); border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; cursor: pointer; color: var(--navy); font-weight: 600; font-size: 13px; padding: 6px; background: var(--gold-soft); }
 .img-add small { font-weight: 400; color: var(--muted); font-size: 11px; }
+.img-item .video-thumb i { font-size: 28px; }
+.var-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.var-table th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 0 4px 4px; }
+.var-table td { padding: 3px 4px; vertical-align: middle; }
+.var-table .input { padding: 6px 8px; min-width: 0; width: 100%; }
+.var-table .var-img { display: flex; align-items: center; gap: 4px; }
+.var-table .var-img select { min-width: 96px; }
+.var-table td:first-child { width: 32%; }
+.var-table .var-img img { width: 34px; height: 34px; object-fit: cover; border-radius: 6px; }
+@media (max-width: 640px) {
+  .var-table thead { display: none; }
+  .var-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .var-table td:first-child { grid-column: 1 / -1; }
+}
 
 /* ---------- Trợ lý Ngân Nguyệt ---------- */
 .nn-widget { position: fixed; right: 16px; bottom: 16px; z-index: 70; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: none; }

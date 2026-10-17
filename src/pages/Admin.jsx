@@ -13,6 +13,8 @@ import { OrderView } from './Order.jsx'
 import { INFO_FIELDS, BANK_FIELDS, normalizeInfo } from '../lib/shopInfo.js'
 import AdminChat, { useChatUnread } from './AdminChat.jsx'
 import { COUPON_KINDS, EMPTY_COUPON, couponStatus, couponStats, describeCoupon, normalizeCoupon, randomCode, toLocalInput } from '../lib/coupons.js'
+import { applyVariants, normalizeVariants, variantErrors, videoFileError, isVideoLink, VIDEO_MAX_MB } from '../lib/variants.js'
+import { VideoThumb } from '../components/ProductMedia.jsx'
 
 function useOrders() {
   const [list, setList] = useState(null)
@@ -141,7 +143,7 @@ function Orders() {
   )
 }
 
-const EMPTY = { name: '', sku: '', category: 'bjd-1-4', kind: 'doll', scale: '1/4', skin: 'trang-hong', gender: 'nu', set_type: 'fullset', stock_type: 'order', lead_days: 35, price: 0, compare_price: null, sizes: [], stock: 99, collection: null, tags: [], rating: 5, review_count: 0, sold: 0, description: '', images: [], active: true, look: { hair: 0, eye: 0, outfit: 0 } }
+const EMPTY = { name: '', sku: '', category: 'bjd-1-4', kind: 'doll', scale: '1/4', skin: 'trang-hong', gender: 'nu', set_type: 'fullset', stock_type: 'order', lead_days: 35, price: 0, compare_price: null, sizes: [], stock: 99, collection: null, tags: [], rating: 5, review_count: 0, sold: 0, description: '', images: [], videos: [], variants: [], active: true, look: { hair: 0, eye: 0, outfit: 0 } }
 function ImageManager({ images, onChange }) {
   const { toast } = useShop()
   const [busy, setBusy] = useState(0)
@@ -187,6 +189,106 @@ function ImageManager({ images, onChange }) {
   )
 }
 
+function VideoManager({ videos, onChange }) {
+  const { toast } = useShop()
+  const [busy, setBusy] = useState(0)
+  const [url, setUrl] = useState('')
+  const add = async files => {
+    const list = [...files].filter(f => f.type.startsWith('video/') || /\.(mp4|webm|mov)$/i.test(f.name))
+    if (!list.length) return
+    const bad = list.map(videoFileError).filter(Boolean)
+    bad.forEach(m => toast(m, 'bad'))
+    const ok = list.filter(f => !videoFileError(f))
+    if (!ok.length) return
+    setBusy(ok.length)
+    const got = []
+    for (const f of ok) {
+      try { got.push(await api.admin.uploadVideo(f)) } catch (e) { toast(e.message, 'bad') }
+      setBusy(n => n - 1)
+    }
+    if (got.length) { onChange([...videos, ...got]); toast(`Đã tải lên ${got.length} video`) }
+  }
+  const addLink = () => {
+    const u = url.trim()
+    if (!isVideoLink(u)) return toast('Link video phải bắt đầu bằng https://', 'bad')
+    onChange([...videos, u]); setUrl('')
+  }
+  const move = (i, d) => { const a = [...videos]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; onChange(a) }
+  return (
+    <fieldset className="img-fs" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <legend>Video sản phẩm ({videos.length})</legend>
+      <div className="img-list">
+        {videos.map((src, i) => (
+          <div key={src.slice(-60) + i} className="img-item">
+            <VideoThumb src={src} />
+            <div className="img-tools">
+              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Lên trước">◀</button>
+              <button type="button" onClick={() => onChange(videos.filter((_, k) => k !== i))} aria-label="Xóa video">✕</button>
+              <button type="button" onClick={() => move(i, 1)} disabled={i === videos.length - 1} aria-label="Ra sau">▶</button>
+            </div>
+          </div>
+        ))}
+        <label className="img-add">
+          <input type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" multiple hidden onChange={e => { add(e.target.files); e.target.value = '' }} />
+          {busy ? `Đang tải ${busy} video…` : <>+ Chọn video<small>MP4, WEBM, MOV · tối đa {VIDEO_MAX_MB} MB</small></>}
+        </label>
+      </div>
+      <div className="row gap">
+        <input className="input" value={url} onChange={e => setUrl(e.target.value)} placeholder="…hoặc dán link YouTube / link video https://…mp4" />
+        <button type="button" className="btn ghost sm" onClick={addLink}>Thêm link</button>
+      </div>
+      <p className="muted small">Video hiện sau ảnh trong khung ảnh sản phẩm. Video dài nên đưa lên YouTube rồi dán link để trang tải nhanh.</p>
+    </fieldset>
+  )
+}
+
+const EMPTY_VARIANT = { name: '', price: '', compare_price: '', stock: '', image: '' }
+function VariantEditor({ variants, images, order, onChange }) {
+  const { toast } = useShop()
+  const [busy, setBusy] = useState(-1)
+  const set = (i, k, v) => onChange(variants.map((x, j) => (j === i ? { ...x, [k]: v } : x)))
+  const money = v => (v === '' || v == null ? '' : Number(String(v).replace(/\D/g, '')).toLocaleString('vi-VN'))
+  const upload = async (i, file) => {
+    if (!file) return
+    setBusy(i)
+    try { set(i, 'image', await api.admin.uploadImage(file)) } catch (e) { toast(e.message, 'bad') } finally { setBusy(-1) }
+  }
+  return (
+    <fieldset className="img-fs">
+      <legend>Biến thể ({variants.length}) — bản khác kích thước, kèm phụ kiện…</legend>
+      {variants.length > 0 && (
+        <table className="var-table">
+          <thead><tr><th>Tên biến thể</th><th>Giá bán (₫)</th><th>Giá gốc (₫)</th>{!order && <th>Tồn</th>}<th>Ảnh</th><th></th></tr></thead>
+          <tbody>{variants.map((v, i) => (
+            <tr key={v.id || i}>
+              <td><input className="input" value={v.name} onChange={e => set(i, 'name', e.target.value)} placeholder="vd Kèm tóc + mắt" /></td>
+              <td><input className="input" value={money(v.price)} onChange={e => set(i, 'price', e.target.value.replace(/\D/g, ''))} inputMode="numeric" /></td>
+              <td><input className="input" value={money(v.compare_price)} onChange={e => set(i, 'compare_price', e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="—" /></td>
+              {!order && <td><input className="input" type="number" min="0" value={v.stock} onChange={e => set(i, 'stock', e.target.value)} /></td>}
+              <td>
+                <div className="var-img">
+                  {v.image && <img src={v.image} alt="" />}
+                  <select className="input" value={images.includes(v.image) ? v.image : v.image ? '__own' : ''} onChange={e => e.target.value !== '__own' && set(i, 'image', e.target.value)} aria-label="Ảnh biến thể">
+                    <option value="">Không</option>
+                    {images.map((src, k) => <option key={k} value={src}>Ảnh {k + 1}</option>)}
+                    {v.image && !images.includes(v.image) && <option value="__own">Ảnh riêng</option>}
+                  </select>
+                  <label className="btn ghost sm" title="Tải ảnh riêng">{busy === i ? '…' : '↑'}<input type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e => { upload(i, e.target.files[0]); e.target.value = '' }} /></label>
+                </div>
+              </td>
+              <td><button type="button" className="link-btn" onClick={() => onChange(variants.filter((_, j) => j !== i))} aria-label="Xóa biến thể">✕</button></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+      <button type="button" className="btn ghost sm" onClick={() => onChange([...variants, { ...EMPTY_VARIANT }])}>+ Thêm biến thể</button>
+      <p className="muted small">{variants.length
+        ? <>Khách phải chọn một biến thể trước khi mua. Trang sản phẩm hiện <b>Giá từ</b> giá thấp nhất{order ? '' : '; tồn kho sản phẩm = tổng tồn các biến thể'}.</>
+        : 'Không có biến thể: bán một giá như bình thường. Thêm biến thể khi có nhiều bản (vd nude / full set, kèm phụ kiện, khác kích thước).'}</p>
+    </fieldset>
+  )
+}
+
 function Backup() {
   const { toast } = useShop()
   const [busy, setBusy] = useState(false)
@@ -199,7 +301,7 @@ function Backup() {
       if (kind === 'json') download(`tieu-hoa-sao-luu-${stamp()}.json`, JSON.stringify(b, null, 1), 'application/json')
       if (kind === 'orders') {
         download(`don-hang-${stamp()}.csv`, toCsv([['Mã đơn', 'Ngày', 'Khách', 'SĐT', 'Email', 'Nhận hàng', 'Thanh toán', 'TT thanh toán', 'Trạng thái', 'Tạm tính', 'Giảm giá', 'Phí ship', 'Tổng', 'Tiền cọc', 'Sản phẩm']]
-          .concat(b.orders.map(o => [o.code, dateTime(o.created_at), o.full_name, o.phone, o.email, o.delivery === 'pickup' ? 'Showroom' : o.address, paymentName(o.payment_method), PAYMENT_STATUS[o.payment_status]?.label, ORDER_STATUS[o.status]?.label, o.subtotal, o.discount, o.shipping_fee, o.total, o.deposit || 0, o.items.map(i => `${i.name} x${i.qty}`).join('; ')]))), 'text/csv')
+          .concat(b.orders.map(o => [o.code, dateTime(o.created_at), o.full_name, o.phone, o.email, o.delivery === 'pickup' ? 'Showroom' : o.address, paymentName(o.payment_method), PAYMENT_STATUS[o.payment_status]?.label, ORDER_STATUS[o.status]?.label, o.subtotal, o.discount, o.shipping_fee, o.total, o.deposit || 0, o.items.map(i => `${i.name}${i.variant ? ` (${i.variant})` : ''}${i.size ? ` size ${i.size}` : ''} x${i.qty}`).join('; ')]))), 'text/csv')
       }
       if (kind === 'products') {
         download(`san-pham-gia-von-${stamp()}.csv`, toCsv([['SKU', 'Tên', 'Danh mục', 'Tỉ lệ', 'Tình trạng', 'Giá bán', 'Giá gốc', 'Tồn', 'Đã bán', 'Giá nhập (tệ)', 'Cân nặng (kg)', 'Giá vốn', 'Link nguồn', 'Đang bán']]
@@ -249,14 +351,20 @@ function ProductForm({ value, cost: cost0, settings, onClose, onSaved }) {
   const setC = (k, v) => setCost(x => ({ ...x, [k]: v }))
   const kind = p.category.startsWith('bjd') ? 'doll' : KINDS[p.category]
   const calc = cost.yuan ? landedCost({ ...cost, kind, scale: p.scale === 'all' ? '1/4' : p.scale }, settings) : null
+  const hasVar = (p.variants || []).length > 0
   const save = async e => {
     e.preventDefault()
-    if (!p.name.trim() || !p.sku.trim() || !(p.price > 0)) return toast('Cần tên, mã SKU và giá bán > 0', 'bad')
-    if (p.compare_price && p.compare_price <= p.price) return toast('Giá gốc phải lớn hơn giá bán (hoặc để trống)', 'bad')
-    if (calc && p.price < calc.cost) return toast('Giá bán đang thấp hơn giá vốn ' + vnd(calc.cost), 'bad')
+    const vars = normalizeVariants(p.variants)
+    if ((p.variants || []).some(v => !String(v.name || '').trim() && (v.price || v.stock))) return toast('Có biến thể chưa đặt tên', 'bad')
+    const vErr = variantErrors(vars)
+    if (vErr.length) return toast(vErr[0], 'bad')
+    const priced = applyVariants(p, vars)
+    if (!p.name.trim() || !p.sku.trim() || !(priced.price > 0)) return toast('Cần tên, mã SKU và giá bán > 0', 'bad')
+    if (!vars.length && p.compare_price && p.compare_price <= p.price) return toast('Giá gốc phải lớn hơn giá bán (hoặc để trống)', 'bad')
+    if (!vars.length && calc && p.price < calc.cost) return toast('Giá bán đang thấp hơn giá vốn ' + vnd(calc.cost), 'bad')
     setBusy(true)
     try {
-      const row = { ...p, kind, set_type: kind === 'doll' ? p.set_type : null, skin: kind === 'doll' ? p.skin : null, slug: p.slug || slugify(p.name + ' ' + p.sku), compare_price: p.compare_price || null, collection: p.collection || null, lead_days: p.stock_type === 'order' ? Number(p.lead_days) || 30 : 0,
+      const row = { ...priced, kind, set_type: kind === 'doll' ? p.set_type : null, skin: kind === 'doll' ? p.skin : null, slug: p.slug || slugify(p.name + ' ' + p.sku), compare_price: priced.compare_price || null, collection: p.collection || null, lead_days: p.stock_type === 'order' ? Number(p.lead_days) || 30 : 0,
         cost: { yuan: Number(cost.yuan) || 0, weight_kg: Number(String(cost.weight_kg).replace(',', '.')) || 0, cn_ship_yuan: Number(cost.cn_ship_yuan) || 0, margin_pct: cost.margin_pct === '' ? null : Number(cost.margin_pct), source_url: cost.source_url.trim() } }
       await api.admin.saveProduct(row); toast('Đã lưu sản phẩm'); onSaved()
     } catch (x) { toast(x.message, 'bad') } finally { setBusy(false) }
@@ -275,7 +383,7 @@ function ProductForm({ value, cost: cost0, settings, onClose, onSaved }) {
             <Field label="Lãi riêng (%)" hint="Bỏ trống: theo cài đặt chung"><input className="input" value={cost.margin_pct ?? ''} onChange={e => setC('margin_pct', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" /></Field>
           </div>
           {cost.source_url && /^https?:\/\//.test(cost.source_url) && <a href={cost.source_url} target="_blank" rel="noreferrer" className="small">Mở link nguồn ↗</a>}
-          {calc && <div className="row gap wrap"><CostBreakdown c={calc} /><button type="button" className="btn sm" onClick={() => set('price', calc.price)}>Dùng giá đề xuất {vnd(calc.price)}</button></div>}
+          {calc && <div className="row gap wrap"><CostBreakdown c={calc} />{!hasVar && <button type="button" className="btn sm" onClick={() => set('price', calc.price)}>Dùng giá đề xuất {vnd(calc.price)}</button>}</div>}
         </fieldset>
         <div className="pf-preview"><ProductArt product={{ ...p, kind, id: p.id || p.sku }} /></div>
         <div className="form-grid">
@@ -288,12 +396,14 @@ function ProductForm({ value, cost: cost0, settings, onClose, onSaved }) {
           <Field label="Giới tính"><select className="input" value={p.gender} onChange={e => set('gender', e.target.value)}>{GENDERS.map(c => <option key={c.key} value={c.key}>{c.name}</option>)}</select></Field>
           <Field label="Tình trạng hàng"><select className="input" value={p.stock_type} onChange={e => set('stock_type', e.target.value)}>{STOCK_TYPES.map(c => <option key={c.key} value={c.key}>{c.name}</option>)}</select></Field>
           {p.stock_type === 'order' && <Field label="Thời gian về (ngày)"><input className="input" type="number" min="1" value={p.lead_days} onChange={e => set('lead_days', e.target.value)} /></Field>}
-          <Field label="Giá bán (₫)"><input className="input" value={p.price ? p.price.toLocaleString('vi-VN') : ''} onChange={e => set('price', num(e.target.value) || 0)} inputMode="numeric" /></Field>
-          <Field label="Giá gốc trước giảm (₫)" hint="Để trống nếu không giảm giá"><input className="input" value={p.compare_price ? p.compare_price.toLocaleString('vi-VN') : ''} onChange={e => set('compare_price', num(e.target.value))} inputMode="numeric" /></Field>
-          <Field label="Tồn kho" hint="Hàng order: để số lớn (vd 99)"><input className="input" type="number" min="0" value={p.stock} onChange={e => set('stock', Math.max(0, parseInt(e.target.value) || 0))} /></Field>
+          {!hasVar && <Field label="Giá bán (₫)"><input className="input" value={p.price ? p.price.toLocaleString('vi-VN') : ''} onChange={e => set('price', num(e.target.value) || 0)} inputMode="numeric" /></Field>}
+          {!hasVar && <Field label="Giá gốc trước giảm (₫)" hint="Để trống nếu không giảm giá"><input className="input" value={p.compare_price ? p.compare_price.toLocaleString('vi-VN') : ''} onChange={e => set('compare_price', num(e.target.value))} inputMode="numeric" /></Field>}
+          {(!hasVar || p.stock_type === 'order') && <Field label="Tồn kho" hint="Hàng order: để số lớn (vd 99)"><input className="input" type="number" min="0" value={p.stock} onChange={e => set('stock', Math.max(0, parseInt(e.target.value) || 0))} /></Field>}
           <Field label="Phong cách"><select className="input" value={p.collection || ''} onChange={e => set('collection', e.target.value || null)}><option value="">—</option>{COLLECTIONS.map(c => <option key={c.slug} value={c.slug}>{c.name}</option>)}</select></Field>
         </div>
         <ImageManager images={p.images || []} onChange={v => set('images', v)} />
+        <VideoManager videos={p.videos || []} onChange={v => set('videos', v)} />
+        <VariantEditor variants={p.variants || []} images={p.images || []} order={p.stock_type === 'order'} onChange={v => set('variants', v)} />
         <div className="row gap wrap">
           {[['moi', 'Hàng mới'], ['ban-chay', 'Bán chạy'], ['flash', 'Flash sale']].map(([k, l]) => (
             <label key={k} className="check"><input type="checkbox" checked={(p.tags || []).includes(k)} onChange={e => set('tags', e.target.checked ? [...(p.tags || []), k] : (p.tags || []).filter(t => t !== k))} /> <span>{l}</span></label>
@@ -339,21 +449,25 @@ function CsvImport({ all, settings, onClose, onDone }) {
       for (const r of rows) {
         // SKU đã có: cập nhật giá nhập + giá bán, giữ nguyên ảnh, mô tả, lượt bán
         const base = r.old ? { ...r.old, name: r.product.name, stock_type: r.product.stock_type, lead_days: r.product.lead_days } : { ...r.product, slug: slugify(r.product.name + ' ' + r.product.sku) }
-        await api.admin.saveProduct({ ...base, price: r.c.price, cost: r.cost }); n++
+        if (r.old && r.has.videos) base.videos = r.product.videos
+        // biến thể trùng tên giữ mã cũ để giỏ hàng của khách không bị mất lựa chọn
+        const vars = r.old && !r.has.variants ? r.old.variants || [] : r.product.variants.map(v => ({ ...v, id: (r.old?.variants || []).find(o => o.name.toLowerCase() === v.name.toLowerCase())?.id || v.id }))
+        await api.admin.saveProduct(applyVariants({ ...base, price: r.c.price, cost: r.cost }, vars)); n++
       }
       toast(`Đã nhập ${n} sản phẩm`); onDone()
     } catch (e) { toast(`Lỗi sau ${n} sản phẩm: ${e.message}`, 'bad') } finally { setBusy(false) }
   }
   return (
     <Modal title="Nhập sản phẩm từ file CSV" onClose={onClose} wide>
-      <p>File CSV (Excel → Lưu thành CSV UTF-8) gồm các cột: <code>{CSV_COLUMNS.join(', ')}</code>. <button className="link-btn" onClick={() => download('mau-nhap-taobao.csv', toCsv([CSV_COLUMNS, ['TB0001', 'Búp bê BJD 1/4 (tên mẫu) — Full set', 'bjd-1-4', '1/4', 'fullset', 'trang-hong', 'nu', 'order', 35, 1056, 1.5, 0, 'https://item.taobao.com/item.htm?id=...', '']]), 'text/csv')}>Tải file mẫu</button></p>
+      <p>File CSV (Excel → Lưu thành CSV UTF-8) gồm các cột: <code>{CSV_COLUMNS.join(', ')}</code>. <button className="link-btn" onClick={() => download('mau-nhap-taobao.csv', toCsv([CSV_COLUMNS, ['TB0001', 'Búp bê BJD 1/4 (tên mẫu) — Full set', 'bjd-1-4', '1/4', 'fullset', 'trang-hong', 'nu', 'order', 35, 1056, 1.5, 0, 'https://item.taobao.com/item.htm?id=...', '', 'Nude:5.200.000 | Full set:5.630.000', '']]), 'text/csv')}>Tải file mẫu</button></p>
+      <p className="muted small">Cột không bắt buộc: <code>bien_the</code> dạng <code>Tên:giá[:tồn] | Tên 2:giá[:tồn]</code> (giá theo đồng, vd <code>Nude:5.200.000 | Full set:5.630.000</code>) và <code>video</code> (link https, nhiều link cách nhau bằng |). Để trống thì giữ nguyên biến thể / video đang có.</p>
       <input type="file" accept=".csv,text/csv" onChange={e => e.target.files[0] && read(e.target.files[0])} />
       {res?.errors.length > 0 && <div className="notice warn small mt">{res.errors.map(e => <div key={e}>{e}</div>)}</div>}
       {rows.length > 0 && <>
         <div className="table-wrap mt">
           <table className="table compact">
             <thead><tr><th>SKU</th><th>Tên</th><th className="r">¥</th><th className="r">kg</th><th className="r">Giá vốn</th><th className="r">Giá bán</th><th></th></tr></thead>
-            <tbody>{rows.map(r => <tr key={r.line}><td>{r.product.sku}</td><td>{r.product.name}</td><td className="r">{r.cost.yuan}</td><td className="r">{r.cost.weight_kg}</td><td className="r">{vnd(r.c.cost)}</td><td className="r"><b>{vnd(r.c.price)}</b></td><td>{r.old ? <Badge tone="info">Cập nhật</Badge> : <Badge tone="ok">Mới</Badge>}</td></tr>)}</tbody>
+            <tbody>{rows.map(r => <tr key={r.line}><td>{r.product.sku}</td><td>{r.product.name}</td><td className="r">{r.cost.yuan}</td><td className="r">{r.cost.weight_kg}</td><td className="r">{vnd(r.c.cost)}</td><td className="r"><b>{r.product.variants.length ? `${r.product.variants.length} loại, từ ${vnd(Math.min(...r.product.variants.map(v => v.price)))}` : vnd(r.c.price)}</b></td><td>{r.old ? <Badge tone="info">Cập nhật</Badge> : <Badge tone="ok">Mới</Badge>}</td></tr>)}</tbody>
           </table>
         </div>
         <button className="btn mt" disabled={busy} onClick={run}>{busy ? 'Đang nhập…' : `Nhập ${rows.length} sản phẩm`}</button>
@@ -423,7 +537,8 @@ function ImportCalc() {
   const [quick, setQuick] = useState({ yuan: 1056, weight_kg: 1.5, kind: 'doll', scale: '1/4' })
   if (!all) return <Spinner />
   const F = [['rate', 'Tỷ giá (VND / 1 tệ)'], ['servicePct', 'Phí mua hộ (%)'], ['shipPerKg', 'Cước Trung → Việt (VND/kg)'], ['insurancePct', 'Bảo hiểm búp bê (%)'], ['overheadPct', 'Chi phí khác (%)'], ['marginDoll', 'Lãi búp bê (%)'], ['marginAcc', 'Lãi phụ kiện (%)'], ['marginSmall', 'Lãi món nhỏ (%)'], ['smallUnder', 'Món nhỏ: giá vốn dưới (VND)']]
-  const rows = all.filter(p => costs[p.id]?.yuan).map(p => ({ p, c: calcFor(p, costs[p.id], settings) }))
+  // sản phẩm có biến thể: giá đặt riêng từng biến thể, không cập nhật hàng loạt theo giá nhập
+  const rows = all.filter(p => costs[p.id]?.yuan && !p.variants?.length).map(p => ({ p, c: calcFor(p, costs[p.id], settings) }))
   const changed = rows.filter(r => r.c.price !== r.p.price)
   const sumCost = rows.reduce((s, r) => s + r.c.cost, 0), sumNew = rows.reduce((s, r) => s + r.c.price, 0)
   const apply = async () => {
