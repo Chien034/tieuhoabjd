@@ -3,15 +3,15 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import { Icon } from './ui.jsx'
 import ProductArt from './ProductArt.jsx'
 import { useShop } from '../lib/store.jsx'
-import { CATEGORIES, GROUPS, SCALES, COLLECTIONS, FREE_SHIP_FROM } from '../lib/data.js'
+import { CATEGORIES, GROUPS, SCALES, COLLECTIONS } from '../lib/data.js'
 import { filterProducts } from '../lib/catalog.js'
 import { vnd } from '../lib/format.js'
 import { DEMO } from '../lib/api.js'
-
-export const SHOP_NAME = import.meta.env.VITE_SHOP_NAME || 'Tiểu Hoa BJD'
-export const HOTLINE = import.meta.env.VITE_HOTLINE || '1800 0000'
+import { telHref, zaloHref } from '../lib/shopInfo.js'
 
 function Logo() {
+  const { info } = useShop()
+  const SHOP_NAME = info.name
   return (
     <Link to="/" className="logo" aria-label={SHOP_NAME + ' — Trang chủ'}>
       <svg viewBox="0 0 64 64" width="34" height="34" aria-hidden="true"><circle cx="32" cy="28" r="16" fill="#f6dcd3" /><path d="M16 28Q16 8 32 8Q48 8 48 28Q42 18 32 21Q22 18 16 28Z" fill="#4a2c5e" /><circle cx="26" cy="29" r="2.6" fill="#d48aa8" /><circle cx="38" cy="29" r="2.6" fill="#d48aa8" /><path d="M18 58Q32 42 46 58Z" fill="#d48aa8" /></svg>
@@ -120,7 +120,8 @@ function MobileMenu({ onClose }) {
 }
 
 function MiniCart() {
-  const { cart, subtotal, setMiniCart, removeLine } = useShop()
+  const { cart, subtotal, setMiniCart, removeLine, info } = useShop()
+  const FREE_SHIP_FROM = info.free_ship_from
   const left = FREE_SHIP_FROM - subtotal
   return (
     <div className="drawer-bg" onClick={() => setMiniCart(false)}>
@@ -158,6 +159,7 @@ function MiniCart() {
 }
 
 function Footer() {
+  const { info } = useShop()
   return (
     <footer className="footer">
       <div className="perks">
@@ -169,8 +171,11 @@ function Footer() {
       <div className="foot-cols container">
         <div>
           <Logo />
-          <p className="muted">Búp bê khớp cầu BJD và phụ kiện nhập trực tiếp từ xưởng. Có sẵn tại Việt Nam hoặc order theo yêu cầu.</p>
-          <p><Icon name="phone" size={16} /> Hotline <a href={'tel:' + HOTLINE.replace(/\s/g, '')}><b>{HOTLINE}</b></a> (8:00 – 21:30)</p>
+          {info.tagline && <p className="muted">{info.tagline}</p>}
+          <p><Icon name="phone" size={16} /> Hotline <a href={telHref(info.hotline)}><b>{info.hotline}</b></a>{info.hours && ` (${info.hours})`}</p>
+          {info.address && <p className="pre-line"><Icon name="pin" size={16} /> {info.address}</p>}
+          {info.email && <p>Email: <a href={'mailto:' + info.email}>{info.email}</a></p>}
+          {(info.zalo || info.facebook) && <p>{info.zalo && <a href={zaloHref(info.zalo)} target="_blank" rel="noreferrer">Zalo</a>}{info.zalo && info.facebook && ' · '}{info.facebook && <a href={info.facebook} target="_blank" rel="noreferrer">Facebook</a>}</p>}
         </div>
         <div>
           <h4>Về chúng tôi</h4>
@@ -192,7 +197,7 @@ function Footer() {
           <Newsletter />
         </div>
       </div>
-      <div className="copyright">© {new Date().getFullYear()} {SHOP_NAME}. Bản quyền thuộc về chủ cửa hàng.</div>
+      <div className="copyright">© {new Date().getFullYear()} {info.name}. Bản quyền thuộc về chủ cửa hàng.</div>
     </footer>
   )
 }
@@ -209,7 +214,7 @@ function Newsletter() {
 }
 
 export default function Layout() {
-  const { user, cartCount, wish, miniCart, setMiniCart } = useShop()
+  const { user, cartCount, wish, miniCart, setMiniCart, info } = useShop()
   const [menu, setMenu] = useState(false)
   const loc = useLocation()
   useEffect(() => { window.scrollTo(0, 0) }, [loc.pathname])
@@ -218,7 +223,7 @@ export default function Layout() {
       {DEMO && <div className="demo-bar">Chế độ DEMO — dữ liệu lưu trong trình duyệt, thanh toán giả lập. Tài khoản quản trị: <b>admin@tieuhoa.vn</b> / <b>admin123</b></div>}
       <div className="topbar">
         <div className="container row-between">
-          <span><Icon name="phone" size={14} /> {HOTLINE} · Miễn phí giao hàng đơn từ 1 triệu</span>
+          <span><Icon name="phone" size={14} /> {info.hotline} · Miễn phí giao hàng đơn từ {vnd(info.free_ship_from)}</span>
           <span className="topbar-links"><Link to="/cua-hang"><Icon name="pin" size={14} /> Showroom</Link><Link to="/tra-cuu-don-hang"><Icon name="truck" size={14} /> Tra cứu đơn</Link><Link to="/huong-dan"><Icon name="user" size={14} /> Chọn size BJD</Link></span>
         </div>
       </div>
@@ -241,7 +246,7 @@ export default function Layout() {
       </header>
       <main><Outlet /></main>
       <Footer />
-      <a className="float-call" href={'tel:' + HOTLINE.replace(/\s/g, '')} aria-label="Gọi hotline"><Icon name="phone" /></a>
+      <a className="float-call" href={telHref(info.hotline)} aria-label="Gọi hotline"><Icon name="phone" /></a>
       {menu && <MobileMenu onClose={() => setMenu(false)} />}
       {miniCart && <MiniCart />}
     </>

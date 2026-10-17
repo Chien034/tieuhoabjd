@@ -172,6 +172,14 @@ create table if not exists public.settings (
 );
 insert into public.settings (id) values (1) on conflict do nothing;
 
+-- Thông tin chung của shop (Quản trị > Cài đặt cửa hàng): tên, hotline, liên hệ, tài khoản ngân hàng
+create table if not exists public.shop_info (
+  id int primary key default 1 check (id = 1),
+  data jsonb not null default '{}',
+  updated_at timestamptz not null default now()
+);
+insert into public.shop_info (id) values (1) on conflict do nothing;
+
 -- ---------------------------------------------------------------- HÀM TIỆN ÍCH
 create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = public as $$
@@ -423,10 +431,11 @@ alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
 alter table public.order_events enable row level security;
 alter table public.settings enable row level security;
+alter table public.shop_info enable row level security;
 
 do $$ declare r record; begin
   for r in select policyname, tablename from pg_policies where schemaname = 'public' and tablename in
-    ('profiles','categories','products','stores','product_costs','import_settings','coupons','addresses','wishlist','reviews','orders','order_items','order_events','settings')
+    ('profiles','categories','products','stores','product_costs','import_settings','coupons','addresses','wishlist','reviews','orders','order_items','order_events','settings','shop_info')
   loop execute format('drop policy %I on public.%I', r.policyname, r.tablename); end loop;
 end $$;
 
@@ -441,6 +450,8 @@ create policy "admin" on public.product_costs for all using (public.is_admin()) 
 create policy "admin" on public.import_settings for all using (public.is_admin()) with check (public.is_admin());
 create policy "ai cũng xem" on public.settings for select using (true);
 create policy "admin ghi" on public.settings for all using (public.is_admin()) with check (public.is_admin());
+create policy "ai cũng xem" on public.shop_info for select using (true);
+create policy "admin ghi" on public.shop_info for all using (public.is_admin()) with check (public.is_admin());
 
 create policy "xem sản phẩm" on public.products for select using (active or public.is_admin());
 create policy "admin ghi" on public.products for all using (public.is_admin()) with check (public.is_admin());

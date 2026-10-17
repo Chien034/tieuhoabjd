@@ -5,6 +5,7 @@ import { PRODUCTS, STORES, COUPONS } from './data.js'
 import { computeTotals, amountDue } from './pricing.js'
 import { DEFAULT_IMPORT } from './importCost.js'
 import { resizeImage, blobToDataUrl } from './images.js'
+import { normalizeInfo, normalizeStore, storeError } from './shopInfo.js'
 
 const URL_ = import.meta.env.VITE_SUPABASE_URL
 const KEY_ = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -44,6 +45,7 @@ const publicUser = u => (u ? { id: u.id, email: u.email, full_name: u.full_name,
 const demoProducts = () => ls.get('hk_products', null) || PRODUCTS
 // Khách không thấy giá nhập: bỏ trường cost khỏi dữ liệu công khai
 const publicProduct = ({ cost, ...p }) => p
+const demoStores = () => ls.get('hk_stores', null) || STORES
 const demoMe = async () => { const id = ls.get('hk_session', null); return id ? (await demoUsers()).find(u => u.id === id) || null : null }
 
 const demo = {
@@ -79,7 +81,8 @@ const demo = {
   },
 
   async products({ includeInactive } = {}) { return demoProducts().filter(p => includeInactive || p.active !== false).map(publicProduct) },
-  async stores() { return STORES },
+  async stores() { return demoStores() },
+  async shopInfo() { return normalizeInfo(ls.get('hk_shop_info', {})) },
   async coupon(code) {
     const c = COUPONS.find(x => x.code === String(code || '').trim().toUpperCase())
     if (!c) throw new Error('Mã giảm giá không hợp lệ hoặc đã hết hạn')
@@ -105,7 +108,7 @@ const demo = {
     const subtotal = items.reduce((s, i) => s + i.line_total, 0)
     const preorder = items.some(i => i.preorder)
     if (preorder && input.payment_method === 'cod') throw new Error('Đơn có hàng đặt trước cần đặt cọc — vui lòng chọn chuyển khoản, VNPay hoặc MoMo')
-    const t = computeTotals({ subtotal, delivery: input.delivery, coupon, preorder })
+    const t = computeTotals({ subtotal, delivery: input.delivery, coupon, preorder, fees: await demo.shopInfo() })
     if (t.couponError) throw new Error(t.couponError)
     ls.set('hk_products', products.map(p => {
       const q = items.filter(i => i.product_id === p.id).reduce((s, i) => s + i.qty, 0)
@@ -207,6 +210,18 @@ const demo = {
     async updateOrder(id, patch, note) { return demo._setStatus(id, patch, note) },
     async importSettings() { return { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) } },
     async saveImportSettings(s) { ls.set('hk_import', s) },
+    async saveShopInfo(info) { const n = normalizeInfo(info); ls.set('hk_shop_info', n); return n },
+    async saveStore(s) {
+      const row = normalizeStore(s); const err = storeError(row); if (err) throw new Error(err)
+      const list = demoStores()
+      if (!row.id) row.id = Math.max(0, ...list.map(x => x.id)) + 1
+      ls.set('hk_stores', list.some(x => x.id === row.id) ? list.map(x => (x.id === row.id ? row : x)) : [...list, row])
+      return row
+    },
+    async deleteStore(id) {
+      if (ls.get('hk_orders', []).some(o => o.store_id === id)) throw new Error('Showroom này đã có đơn nhận tại cửa hàng nên không xóa được. Hãy sửa thông tin thay vì xóa.')
+      ls.set('hk_stores', demoStores().filter(x => x.id !== id))
+    },
     async costs() { return Object.fromEntries(demoProducts().map(p => [p.id, p.cost || {}])) },
     async saveProduct(p) {
       const list = demoProducts()
@@ -219,9 +234,9 @@ const demo = {
     // Demo: ảnh lưu thẳng trong trình duyệt (nhỏ hơn để vừa bộ nhớ ~5 MB)
     async uploadImage(file) { return blobToDataUrl(await resizeImage(file, 700, 0.8)) },
     async backup() {
-      return { exported_at: new Date().toISOString(), mode: 'demo', products: demoProducts(), orders: ls.get('hk_orders', []), customers: (await demoUsers()).map(publicUser), import_settings: { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) } }
+      return { exported_at: new Date().toISOString(), mode: 'demo', products: demoProducts(), orders: ls.get('hk_orders', []), customers: (await demoUsers()).map(publicUser), import_settings: { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) }, shop_info: await demo.shopInfo(), stores: demoStores() }
     },
-    async resetDemo() { ['hk_products', 'hk_orders', 'hk_reviews', 'hk_import'].forEach(k => localStorage.removeItem(k)) },
+    async resetDemo() { ['hk_products', 'hk_orders', 'hk_reviews', 'hk_import', 'hk_shop_info', 'hk_stores'].forEach(k => localStorage.removeItem(k)) },
   },
 }
 
@@ -278,6 +293,14 @@ const sb = {
     return must(await q)
   },
   async stores() { return must(await supabase.from('stores').select('*').order('id')) },
+  // Bảng shop_info chưa tạo (chưa chạy SQL cài đặt) thì dùng giá trị dự phòng, web vẫn chạy
+  async shopInfo() {
+    const [a, b] = await Promise.all([
+      supabase.from('shop_info').select('data').eq('id', 1).maybeSingle(),
+      supabase.from('settings').select('shipping_fee, free_ship_from').eq('id', 1).maybeSingle(),
+    ])
+    return normalizeInfo({ ...(a.data?.data || {}), ...(b.data || {}) })
+  },
   async coupon(code) {
     const rows = must(await supabase.rpc('check_coupon', { p_code: String(code || '').trim().toUpperCase() }))
     if (!rows?.length) throw new Error('Mã giảm giá không hợp lệ hoặc đã hết hạn')
@@ -347,6 +370,23 @@ const sb = {
       return { ...DEFAULT_IMPORT, ...(data?.data || {}) }
     },
     async saveImportSettings(s) { must(await supabase.from('import_settings').upsert({ id: 1, data: s })) },
+    async saveShopInfo(info) {
+      const { shipping_fee, free_ship_from, ...data } = normalizeInfo(info)
+      const r = await supabase.from('shop_info').upsert({ id: 1, data, updated_at: new Date().toISOString() })
+      if (r.error && /shop_info/.test(r.error.message)) throw new Error('Chưa có bảng shop_info — hãy chạy file supabase/cai-dat-cua-hang.sql trong Supabase SQL Editor')
+      must(r)
+      must(await supabase.from('settings').upsert({ id: 1, shipping_fee, free_ship_from }))
+      return { ...data, shipping_fee, free_ship_from }
+    },
+    async saveStore(s) {
+      const row = normalizeStore(s); const err = storeError(row); if (err) throw new Error(err)
+      return must(await supabase.from('stores').upsert(row).select().single())
+    },
+    async deleteStore(id) {
+      const r = await supabase.from('stores').delete().eq('id', id)
+      if (r.error && /foreign key|violates/i.test(r.error.message)) throw new Error('Showroom này đã có đơn nhận tại cửa hàng nên không xóa được. Hãy sửa thông tin thay vì xóa.')
+      must(r)
+    },
     async costs() {
       const rows = must(await supabase.from('product_costs').select('*'))
       return Object.fromEntries(rows.map(({ product_id, ...c }) => [product_id, c]))
@@ -368,9 +408,9 @@ const sb = {
       return supabase.storage.from('san-pham').getPublicUrl(path).data.publicUrl
     },
     async backup() {
-      const [products, costs, orders, customers, settings] = await Promise.all([
-        sb.products({ includeInactive: true }), sb.admin.costs(), sb.admin.orders({ all: true }), sb.admin.customers(), sb.admin.importSettings()])
-      return { exported_at: new Date().toISOString(), mode: 'supabase', products: products.map(p => ({ ...p, cost: costs[p.id] || null })), orders, customers, import_settings: settings }
+      const [products, costs, orders, customers, settings, shop_info, stores] = await Promise.all([
+        sb.products({ includeInactive: true }), sb.admin.costs(), sb.admin.orders({ all: true }), sb.admin.customers(), sb.admin.importSettings(), sb.shopInfo(), sb.stores()])
+      return { exported_at: new Date().toISOString(), mode: 'supabase', products: products.map(p => ({ ...p, cost: costs[p.id] || null })), orders, customers, import_settings: settings, shop_info, stores }
     },
   },
 }

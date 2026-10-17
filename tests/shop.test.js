@@ -165,3 +165,29 @@ test('nhập CSV: số kiểu Việt/Anh, trùng SKU, gõ sai, file trống, b�
   assert.equal(decodeCsv(new Uint8Array([0x42, 0xfa, 0x70, 0x20, 0x62, 0xea])), 'Búp bê')
   assert.equal(decodeCsv(new TextEncoder().encode('Búp bê')), 'Búp bê')
 })
+
+import { normalizeInfo, cleanText, normalizeStore, storeError, DEFAULT_INFO } from '../src/lib/shopInfo.js'
+
+test('cài đặt cửa hàng: bỏ BOM / ký tự ẩn, trường bắt buộc trống thì lấy mặc định', () => {
+  assert.equal(cleanText('﻿ 0909​ 123 456 \r\n'), '0909 123 456')
+  const n = normalizeInfo({ name: '', hotline: '﻿0909 123 456', bank_id: ' tcb ', bank_account: '1903 4567-89​', bank_account_name: 'vu sy chien', shipping_fee: '25.000', free_ship_from: '' })
+  assert.equal(n.name, DEFAULT_INFO.name)
+  assert.equal(n.hotline, '0909 123 456')
+  assert.deepEqual([n.bank_id, n.bank_account, n.bank_account_name], ['TCB', '1903456789', 'VU SY CHIEN'])
+  assert.equal(n.shipping_fee, 25000)
+  assert.equal(n.free_ship_from, DEFAULT_INFO.free_ship_from)
+  assert.equal(normalizeInfo({ email: '' }, { ...DEFAULT_INFO, email: 'a@b.vn' }).email, '')
+})
+
+test('phí giao hàng theo cài đặt cửa hàng', () => {
+  const fees = { shipping_fee: 40_000, free_ship_from: 2_000_000 }
+  assert.equal(computeTotals({ subtotal: 1_500_000, delivery: 'ship', fees }).shipping, 40_000)
+  assert.equal(computeTotals({ subtotal: 2_000_000, delivery: 'ship', fees }).shipping, 0)
+})
+
+test('showroom: làm sạch và bắt buộc tên, tỉnh, địa chỉ', () => {
+  const s = normalizeStore({ name: ' Showroom﻿ HN ', city: 'Hà Nội', address: '' })
+  assert.equal(s.name, 'Showroom HN')
+  assert.ok(storeError(s))
+  assert.equal(storeError({ ...s, address: '1 Phố Huế' }), '')
+})

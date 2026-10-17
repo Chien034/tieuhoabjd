@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { api, onAuthChange } from './api.js'
+import { DEFAULT_INFO } from './shopInfo.js'
 
 const Ctx = createContext(null)
 export const useShop = () => useContext(Ctx)
@@ -15,6 +16,7 @@ export function ShopProvider({ children }) {
   const [wish, setWish] = useState([])
   const [toasts, setToasts] = useState([])
   const [miniCart, setMiniCart] = useState(false)
+  const [info, setInfo] = useState(DEFAULT_INFO) // thông tin cửa hàng (Quản trị > Cài đặt cửa hàng)
 
   const toast = useCallback((text, tone = 'ok') => {
     const id = Math.random()
@@ -30,6 +32,7 @@ export function ShopProvider({ children }) {
   useEffect(() => {
     api.currentUser().then(setUser).catch(() => setUser(null))
     reloadProducts()
+    api.shopInfo().then(setInfo).catch(() => {})
     return onAuthChange(u => setUser(u))
   }, [reloadProducts])
 
@@ -87,7 +90,7 @@ export function ShopProvider({ children }) {
   const value = {
     user, setUser, products, productsError, reloadProducts, byId,
     cart: cartLines, cartCount, subtotal, addToCart, setQty, removeLine, changeSize, clearCart,
-    wish, toggleWish, toast, miniCart, setMiniCart,
+    wish, toggleWish, toast, miniCart, setMiniCart, info, setInfo,
   }
   return (
     <Ctx.Provider value={value}>

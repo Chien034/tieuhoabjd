@@ -6,7 +6,7 @@ import { filterProducts } from '../lib/catalog.js'
 import ProductArt from '../components/ProductArt.jsx'
 import { Countdown, Rail, Icon, ProductCard } from '../components/ui.jsx'
 import { SizeTable } from './Product.jsx'
-import { HOTLINE } from '../components/Layout.jsx'
+import { telHref } from '../lib/shopInfo.js'
 
 const SLIDES = [
   { title: 'BJD 1/4 — dễ chơi nhất', sub: 'Full set đủ tóc, mắt, trang phục, makeup — chỉ việc mở hộp', cta: 'Xem búp bê 1/4', to: '/danh-muc/bjd-1-4', bg: 'linear-gradient(120deg,#4a2c5e,#8a5a9e)', pick: p => p.kind === 'doll' && p.scale === '1/4' && p.set_type === 'fullset' },
@@ -41,7 +41,7 @@ function Hero({ products }) {
 }
 
 export default function Home() {
-  const { products } = useShop()
+  const { products, info } = useShop()
 
   const L = useMemo(() => {
     if (!products) return {}
@@ -109,7 +109,7 @@ export default function Home() {
         <div className="panel promo-panel">
           <h2>Order theo yêu cầu</h2>
           <p>Thích mẫu nào trên Taobao, Weibo? Gửi link cho shop — báo giá trọn gói về Việt Nam trong 24 giờ, cọc 50%, theo dõi đơn ngay trên web.</p>
-          <a href={'tel:' + HOTLINE.replace(/\s/g, '')} className="btn gold"><Icon name="phone" size={16} /> Gọi {HOTLINE}</a>
+          <a href={telHref(info.hotline)} className="btn gold"><Icon name="phone" size={16} /> Gọi {info.hotline}</a>
         </div>
       </section>
 

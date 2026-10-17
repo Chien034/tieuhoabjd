@@ -16,9 +16,11 @@ export function couponDiscount(coupon, subtotal) {
 export const DEPOSIT_PCT = 50
 
 // preorder: đơn có hàng đặt trước → khách cọc 50% tổng đơn (làm tròn lên nghìn đồng)
-export function computeTotals({ subtotal, delivery, coupon, preorder = false }) {
+// fees: phí giao hàng đang cài trong Quản trị (bảng settings), mặc định theo data.js
+export function computeTotals({ subtotal, delivery, coupon, preorder = false, fees = {} }) {
+  const fee = fees.shipping_fee ?? SHIPPING_FEE, freeFrom = fees.free_ship_from ?? FREE_SHIP_FROM
   const c = couponDiscount(coupon, subtotal)
-  const shipping = delivery === 'pickup' || c.freeship || subtotal >= FREE_SHIP_FROM || subtotal === 0 ? 0 : SHIPPING_FEE
+  const shipping = delivery === 'pickup' || c.freeship || subtotal >= freeFrom || subtotal === 0 ? 0 : fee
   const total = subtotal - c.discount + shipping
   const deposit = preorder ? Math.ceil(total * DEPOSIT_PCT / 100 / 1000) * 1000 : 0
   return { subtotal, discount: c.discount, shipping, total, deposit, couponError: c.error }

@@ -7,12 +7,12 @@ import { amountDue } from '../lib/pricing.js'
 import { Badge, Breadcrumb, Empty, Icon, Spinner, Field } from '../components/ui.jsx'
 import { rememberOrderPhone } from './Checkout.jsx'
 
-const BANK = { id: import.meta.env.VITE_BANK_ID || 'VCB', acc: import.meta.env.VITE_BANK_ACCOUNT || '0123456789', name: import.meta.env.VITE_BANK_ACCOUNT_NAME || 'TIEU HOA BJD' }
 const STEPS = ['cho_xac_nhan', 'da_xac_nhan', 'dang_giao', 'da_giao']
 const storedPhone = code => { try { return sessionStorage.getItem('hk_phone_' + code) || '' } catch { return '' } }
 
 export function OrderView({ order, onChange }) {
-  const { toast, user } = useShop()
+  const { toast, user, info } = useShop()
+  const BANK = { id: info.bank_id, acc: info.bank_account, name: info.bank_account_name }
   const [stores, setStores] = useState([])
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (order.store_id) api.stores().then(setStores).catch(() => {}) }, [order.store_id])

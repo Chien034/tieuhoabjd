@@ -7,7 +7,7 @@ import { relatedProducts } from '../lib/catalog.js'
 import { vnd, date } from '../lib/format.js'
 import ProductArt from '../components/ProductArt.jsx'
 import { Breadcrumb, Icon, Modal, Price, Qty, Rail, Stars, Empty, Spinner } from '../components/ui.jsx'
-import { HOTLINE } from '../components/Layout.jsx'
+import { telHref } from '../lib/shopInfo.js'
 
 export const BJD_SIZES = [
   ['1/3 · SD', '58–65cm', '8–9 inch', '16–18mm', '~2,5–3,5kg', 'Nhiều chi tiết, chụp ảnh đẹp, quần áo đa dạng nhất; nặng, cần túi riêng'],
@@ -75,7 +75,7 @@ function Reviews({ product }) {
 
 export default function Product() {
   const { slug } = useParams()
-  const { products, addToCart, wish, toggleWish, toast } = useShop()
+  const { products, addToCart, wish, toggleWish, toast, info } = useShop()
   const nav = useNavigate()
   const p = useMemo(() => products?.find(x => x.slug === slug), [products, slug])
   const [img, setImg] = useState(0)
@@ -168,7 +168,7 @@ export default function Product() {
             <li><Icon name="refresh" size={18} /> Đổi / hoàn tiền nếu lỗi đúc, nứt vỡ khi vận chuyển (báo trong 48 giờ)</li>
             <li><Icon name="gift" size={18} /> Tặng túi zip bảo quản + phiếu hướng dẫn chăm sóc resin</li>
           </ul>
-          <div className="advice">Cần tư vấn? Gọi <a href={'tel:' + HOTLINE.replace(/\s/g, '')}><b>{HOTLINE}</b></a> hoặc <button className="link-btn" onClick={() => setCallback(true)}>để lại số, chúng tôi gọi lại</button></div>
+          <div className="advice">Cần tư vấn? Gọi <a href={telHref(info.hotline)}><b>{info.hotline}</b></a> hoặc <button className="link-btn" onClick={() => setCallback(true)}>để lại số, chúng tôi gọi lại</button></div>
         </div>
       </div>
 

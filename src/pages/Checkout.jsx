@@ -11,7 +11,7 @@ import { Breadcrumb, Empty, Field } from '../components/ui.jsx'
 export function rememberOrderPhone(code, phone) { try { sessionStorage.setItem('hk_phone_' + code, phone) } catch { /* bỏ qua */ } }
 
 export default function Checkout() {
-  const { cart, subtotal, user, clearCart, toast, reloadProducts } = useShop()
+  const { cart, subtotal, user, clearCart, toast, reloadProducts, info } = useShop()
   const nav = useNavigate()
   const [stores, setStores] = useState([])
   const [addrs, setAddrs] = useState([])
@@ -35,7 +35,7 @@ export default function Checkout() {
   }, [user])
 
   const preorder = cart.some(l => l.product.stock_type === 'order')
-  const totals = useMemo(() => computeTotals({ subtotal, delivery: f.delivery, coupon, preorder }), [subtotal, f.delivery, coupon, preorder])
+  const totals = useMemo(() => computeTotals({ subtotal, delivery: f.delivery, coupon, preorder, fees: info }), [subtotal, f.delivery, coupon, preorder, info])
   useEffect(() => { if (preorder && f.payment_method === 'cod') setF(x => ({ ...x, payment_method: 'bank' })) }, [preorder, f.payment_method])
   const savedAddr = addrs.find(a => a.id === addrId)
 

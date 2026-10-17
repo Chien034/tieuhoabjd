@@ -1,13 +1,13 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useShop } from '../lib/store.jsx'
 import { vnd } from '../lib/format.js'
-import { FREE_SHIP_FROM } from '../lib/data.js'
 import ProductArt from '../components/ProductArt.jsx'
 import { Breadcrumb, Empty, Qty, Rail } from '../components/ui.jsx'
 import { filterProducts } from '../lib/catalog.js'
 
 export default function Cart() {
-  const { cart, subtotal, setQty, removeLine, changeSize, products } = useShop()
+  const { cart, subtotal, setQty, removeLine, changeSize, products, info } = useShop()
+  const FREE_SHIP_FROM = info.free_ship_from
   const nav = useNavigate()
   const left = FREE_SHIP_FROM - subtotal
   const problems = cart.filter(l => l.product.stock < l.qty || (l.product.sizes?.length && !l.size))
