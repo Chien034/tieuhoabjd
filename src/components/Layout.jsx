@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from './ui.jsx'
 import ProductArt from './ProductArt.jsx'
+import ChatWidget from './ChatWidget.jsx'
 import { useShop } from '../lib/store.jsx'
 import { CATEGORIES, GROUPS, SCALES, COLLECTIONS } from '../lib/data.js'
 import { filterProducts } from '../lib/catalog.js'
@@ -247,6 +248,7 @@ export default function Layout() {
       <main><Outlet /></main>
       <Footer />
       <a className="float-call" href={telHref(info.hotline)} aria-label="Gọi hotline"><Icon name="phone" /></a>
+      <ChatWidget />
       {menu && <MobileMenu onClose={() => setMenu(false)} />}
       {miniCart && <MiniCart />}
     </>

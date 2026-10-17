@@ -43,6 +43,7 @@ Giá nhập chỉ quản trị xem được (bảng `product_costs` có RLS ch�
 | **Đặt trước** | Đơn có hàng order: **cọc 50%** (không cho COD), trả phần còn lại khi hàng về; VNPay/MoMo/VietQR tự thu đúng số tiền cọc / còn lại; không ghi trùng giao dịch. |
 | **Tài khoản** | Đăng ký, đăng nhập, quên mật khẩu, đơn hàng, sổ địa chỉ, yêu thích. Tra cứu đơn bằng mã + SĐT. |
 | **Quản trị** | Doanh thu, đơn hàng (xác nhận cọc / đủ tiền, đổi trạng thái, CSV), sản phẩm (kèm giá nhập, giá vốn, % lãi), **Tính giá nhập**, khách hàng. |
+| **Trợ lý Ngân Nguyệt** | Nhân vật 2D ở góc màn hình (chớp mắt, vẫy tay, vui, suy nghĩ, ngại). Tab **Hỏi Ngân Nguyệt**: bot tự trả lời cách đặt hàng, đặt cọc, phí ship, thanh toán, đổi trả, size, tìm sản phẩm theo tỉ lệ / loại / giá — không cần khóa AI (chỗ cắm AI: `setAiFallback` trong `src/lib/assistant.js`). Tab **Chat với shop**: khách đăng nhập nhắn trực tiếp, shop trả lời ở **Quản trị > Tin nhắn** (realtime). Cần chạy `supabase/tro-ly-chat.sql` một lần. |
 
 ---
 
@@ -79,7 +80,7 @@ E:\Tiểu hoa kế toán\
 └── cau-hinh-trien-khai.txt
 ```
 
-Làm tay (nếu không dùng script): Supabase SQL Editor chạy `supabase/schema.sql` rồi `supabase/seed.sql`; Vercel import repo với **Root Directory = `shop`**, biến môi trường theo `.env.example`; đăng ký tài khoản rồi `select public.make_admin('email');`. VNPay: IPN URL = `https://<web>/api/vnpay-ipn`.
+Làm tay (nếu không dùng script): Supabase SQL Editor chạy `supabase/schema.sql`, `supabase/seed.sql`, rồi `supabase/cai-dat-cua-hang.sql` và `supabase/tro-ly-chat.sql`; Vercel import repo với **Root Directory = `shop`**, biến môi trường theo `.env.example`; đăng ký tài khoản rồi `select public.make_admin('email');`. VNPay: IPN URL = `https://<web>/api/vnpay-ipn`.
 
 ## 5. Đưa hàng Taobao thật lên web
 
