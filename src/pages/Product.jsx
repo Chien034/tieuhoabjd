@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useShop, rememberViewed } from '../lib/store.jsx'
 import { api } from '../lib/api.js'
 import { CATEGORIES, GROUPS, SKINS, GENDERS, SETS, COLLECTIONS } from '../lib/data.js'
@@ -10,6 +10,7 @@ import { Breadcrumb, Icon, Modal, Price, Qty, Rail, Stars, Empty, Spinner } from
 import { telHref } from '../lib/shopInfo.js'
 import { hasVariants, variantOf, unitStock } from '../lib/variants.js'
 import { VideoView, VideoThumb, productMedia } from '../components/ProductMedia.jsx'
+import { reviewSummary, MAX_REVIEW_IMAGES, fmtSold } from '../lib/reviews.js'
 
 export const BJD_SIZES = [
   ['1/3 · SD', '58–65cm', '8–9 inch', '16–18mm', '~2,5–3,5kg', 'Nhiều chi tiết, chụp ảnh đẹp, quần áo đa dạng nhất; nặng, cần túi riêng'],
@@ -38,37 +39,90 @@ export function SizeGuide({ onClose }) {
   )
 }
 
-function Reviews({ product }) {
-  const { user, toast } = useShop()
-  const [list, setList] = useState(null)
+function ReviewImages({ images }) {
+  if (!images?.length) return null
+  return <div className="review-imgs">{images.map((src, i) => <a key={i} href={src} target="_blank" rel="noreferrer"><img src={src} alt={'Ảnh đánh giá ' + (i + 1)} loading="lazy" /></a>)}</div>
+}
+
+// Tổng quan: điểm trung bình + tỉ lệ % từng mức sao. Chưa có đánh giá thì không hiện điểm.
+export function ReviewSummary({ list }) {
+  const s = reviewSummary(list)
+  if (!s.count) return <p className="muted">Chưa có đánh giá nào cho sản phẩm này.</p>
+  return (
+    <div className="review-sum">
+      <div className="review-avg"><b>{s.avg.toFixed(1)}</b><Stars value={s.avg} size={18} /><span className="muted small">{s.count} đánh giá</span></div>
+      <div className="review-bars">
+        {[5, 4, 3, 2, 1].map(n => (
+          <div key={n} className="review-bar"><span>{n} ★</span><i><em style={{ width: s.pct[n] + '%' }} /></i><small>{s.pct[n]}%</small></div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ReviewForm({ product, slots, onSent }) {
+  const { toast } = useShop()
+  const open = slots.filter(x => !x.review_id)
+  const [order, setOrder] = useState(open[0]?.order_id || '')
   const [rating, setRating] = useState(5)
   const [content, setContent] = useState('')
-  useEffect(() => { api.reviews(product.id).then(setList).catch(() => setList([])) }, [product.id])
+  const [images, setImages] = useState([])
+  const [busy, setBusy] = useState(false)
+  const addImages = async files => {
+    const list = [...files].filter(f => f.type.startsWith('image/')).slice(0, MAX_REVIEW_IMAGES.customer - images.length)
+    if (!list.length) return
+    setBusy(true)
+    try { const got = []; for (const f of list) got.push(await api.uploadReviewImage(f)); setImages(x => [...x, ...got]) } catch (er) { toast(er.message, 'bad') } finally { setBusy(false) }
+  }
   const submit = async e => {
     e.preventDefault()
     if (content.trim().length < 5) return toast('Vui lòng viết ít nhất vài chữ', 'bad')
+    setBusy(true)
     try {
-      const r = await api.addReview(product.id, rating, content.trim())
-      setList(l => [r, ...l.filter(x => x.user_id !== r.user_id)]); setContent(''); toast('Cảm ơn bạn đã đánh giá!')
-    } catch (er) { toast(er.message === 'LOGIN' ? 'Vui lòng đăng nhập' : er.message, 'bad') }
+      await api.submitReview({ product_id: product.id, order_id: order, rating, content, images })
+      setContent(''); setImages([]); toast('Cảm ơn bạn đã đánh giá!'); onSent()
+    } catch (er) { toast(er.message === 'LOGIN' ? 'Vui lòng đăng nhập' : er.message, 'bad') } finally { setBusy(false) }
   }
-  const avg = list?.length ? list.reduce((s, r) => s + r.rating, 0) / list.length : product.rating
+  if (!open.length) return <p className="muted small">Bạn đã đánh giá sản phẩm này cho {slots.length > 1 ? `cả ${slots.length} lần mua` : 'lần mua của mình'}. Cảm ơn bạn!</p>
+  return (
+    <form className="review-form" onSubmit={submit}>
+      {open.length > 1 ? (
+        <label className="small">Đánh giá cho đơn <select className="input sm auto" value={order} onChange={e => setOrder(e.target.value)}>{open.map(x => <option key={x.order_id} value={x.order_id}>{x.code}</option>)}</select></label>
+      ) : <small className="muted">Đánh giá cho đơn <b>{open[0].code}</b></small>}
+      <div className="star-pick" role="radiogroup" aria-label="Số sao">
+        {[1, 2, 3, 4, 5].map(n => <button type="button" key={n} className={n <= rating ? 'on' : ''} onClick={() => setRating(n)} aria-label={n + ' sao'} aria-checked={n === rating} role="radio">★</button>)}
+      </div>
+      <textarea value={content} onChange={e => setContent(e.target.value)} placeholder="Chia sẻ cảm nhận của bạn về sản phẩm…" rows={3} maxLength={1000} />
+      <div className="review-imgs">
+        {images.map((src, i) => <span key={i} className="review-img-edit"><img src={src} alt={'Ảnh ' + (i + 1)} /><button type="button" onClick={() => setImages(x => x.filter((_, k) => k !== i))} aria-label="Bỏ ảnh">✕</button></span>)}
+        {images.length < MAX_REVIEW_IMAGES.customer && <label className="review-img-add">{busy ? '…' : '+ Ảnh'}<input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={e => { addImages(e.target.files); e.target.value = '' }} /></label>}
+      </div>
+      <button className="btn sm" disabled={busy}>{busy ? 'Đang gửi…' : 'Gửi đánh giá'}</button>
+    </form>
+  )
+}
+
+function Reviews({ product }) {
+  const { user, reloadProducts } = useShop()
+  const [list, setList] = useState(null)
+  const [slots, setSlots] = useState(null)
+  const load = () => {
+    api.reviews(product.id).then(setList).catch(() => setList([]))
+    if (user) api.reviewSlots(product.id).then(setSlots).catch(() => setSlots([]))
+  }
+  useEffect(load, [product.id, user?.id])
   return (
     <div>
-      <div className="review-sum"><b>{avg.toFixed(1)}</b><Stars value={avg} size={18} /><span className="muted">{(list?.length || 0) + product.review_count} đánh giá</span></div>
-      {user ? (
-        <form className="review-form" onSubmit={submit}>
-          <div className="star-pick" role="radiogroup" aria-label="Số sao">
-            {[1, 2, 3, 4, 5].map(n => <button type="button" key={n} className={n <= rating ? 'on' : ''} onClick={() => setRating(n)} aria-label={n + ' sao'} aria-checked={n === rating} role="radio">★</button>)}
-          </div>
-          <textarea value={content} onChange={e => setContent(e.target.value)} placeholder="Chia sẻ cảm nhận của bạn về sản phẩm…" rows={3} maxLength={1000} />
-          <button className="btn sm">Gửi đánh giá</button>
-        </form>
-      ) : <p className="muted"><Link to="/dang-nhap">Đăng nhập</Link> để viết đánh giá.</p>}
-      {list === null ? <Spinner /> : list.length === 0 ? <p className="muted">Chưa có đánh giá chi tiết nào.</p> : list.map(r => (
+      {list === null ? <Spinner /> : <ReviewSummary list={list} />}
+      {!user ? <p className="muted small"><Link to="/dang-nhap">Đăng nhập</Link> để đánh giá sản phẩm bạn đã mua.</p>
+        : slots === null ? null
+        : slots.length ? <ReviewForm key={slots.map(x => x.review_id).join()} product={product} slots={slots} onSent={() => { load(); reloadProducts() }} />
+        : <p className="muted small">Chỉ khách đã mua và nhận hàng thành công mới đánh giá được sản phẩm này.</p>}
+      {list?.map(r => (
         <div key={r.id} className="review">
-          <div className="row gap"><b>{r.name || 'Khách hàng'}</b><Stars value={r.rating} /><small className="muted">{date(r.created_at)}</small></div>
+          <div className="row gap wrap"><b>{r.name || 'Khách hàng'}</b><Stars value={r.rating} />{r.order_id && <span className="review-buyer">✓ Đã mua hàng</span>}<small className="muted">{date(r.created_at)}</small></div>
           <p>{r.content}</p>
+          <ReviewImages images={r.images} />
         </div>
       ))}
     </div>
@@ -91,6 +145,8 @@ export default function Product() {
   const [vid, setVid] = useState('')
   const [varErr, setVarErr] = useState(false)
   const media = useMemo(() => (p ? productMedia(p) : []), [p])
+  const { hash } = useLocation()
+  useEffect(() => { if (hash === '#danh-gia') setTab('danh-gia') }, [hash, slug])
 
   useEffect(() => { if (p) { rememberViewed(p.id); document.title = p.name } setImg(0); setSize(''); setQty(1); setSizeErr(false); setVid(''); setVarErr(false) }, [p])
 
@@ -154,7 +210,7 @@ export default function Product() {
         <div className="pdp-info">
           <h1>{p.name}</h1>
           <div className="row gap wrap muted small">
-            <span>Mã: <b>{p.sku}</b></span><span><Stars value={p.rating} /> {p.rating}</span><span>{p.review_count} đánh giá</span><span>Đã bán {p.sold}</span>
+            <span>Mã: <b>{p.sku}</b></span>{p.review_count > 0 ? <button className="link-btn small" onClick={() => setTab('danh-gia')}><Stars value={p.rating} /> {Number(p.rating).toFixed(1)} · {p.review_count} đánh giá</button> : <span>Chưa có đánh giá</span>}<span>Đã bán {fmtSold(p.sold || 0)}</span>
           </div>
           <Price p={shown} big from={v ? false : undefined} />
           {p.stock_type === 'order' && p.kind === 'doll' ? <div className="install">Đặt cọc 50%{v ? '' : ' (từ)'}: <b>{vnd(Math.ceil(shown.price / 2 / 1000) * 1000)}</b></div> : <div className="install">&nbsp;</div>}

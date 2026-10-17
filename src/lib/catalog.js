@@ -47,7 +47,7 @@ export function filterProducts(all, f = {}) {
   }
   const pct = p => (p.compare_price ? 1 - p.price / p.compare_price : 0)
   const sorters = {
-    'pho-bien': (a, b) => b.sold * b.rating - a.sold * a.rating,
+    'pho-bien': (a, b) => b.sold * (b.rating || 4.5) - a.sold * (a.rating || 4.5), // chưa có đánh giá: tính như 4,5 sao
     moi: (a, b) => String(b.created_at).localeCompare(String(a.created_at)),
     'ban-chay': (a, b) => b.sold - a.sold,
     'gia-tang': (a, b) => a.price - b.price,

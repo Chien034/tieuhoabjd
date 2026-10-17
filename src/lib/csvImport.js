@@ -90,7 +90,7 @@ export function rowsToProducts(rows) {
         gender: ['nu', 'nam', 'unisex'].includes(g('gioi_tinh')) ? g('gioi_tinh') : 'unisex',
         stock_type: order ? 'order' : 'co-san', lead_days: order ? (num(g('so_ngay_ve')) || (kind === 'doll' ? 35 : 15)) : 0,
         stock: order ? 99 : 1, description: g('mo_ta'), images: [], tags: ['moi'], active: true, sizes: [],
-        rating: 5, review_count: 0, sold: 0, compare_price: null, collection: null,
+        rating: 0, review_count: 0, sold: 0, sold_bonus: 0, compare_price: null, collection: null,
         variants: normalizeVariants(vc.variants.map(v => ({ ...v, stock: v.stock ?? 1 }))), videos,
       },
       // ô trống = giữ biến thể / video đang có khi cập nhật SKU cũ

@@ -7,7 +7,7 @@ import { CATEGORIES, SCALES, SKINS, GENDERS, SETS, STOCK_TYPES, KINDS, COLLECTIO
 import { landedCost, DEFAULT_IMPORT } from '../lib/importCost.js'
 import { download, toCsv } from '../lib/images.js'
 import { decodeCsv, parseCsv, rowsToProducts, CSV_COLUMNS } from '../lib/csvImport.js'
-import { Badge, Field, Modal, Spinner } from '../components/ui.jsx'
+import { Badge, Field, Modal, Spinner, Stars } from '../components/ui.jsx'
 import ProductArt from '../components/ProductArt.jsx'
 import { OrderView } from './Order.jsx'
 import { INFO_FIELDS, BANK_FIELDS, normalizeInfo } from '../lib/shopInfo.js'
@@ -15,6 +15,7 @@ import AdminChat, { useChatUnread } from './AdminChat.jsx'
 import { COUPON_KINDS, EMPTY_COUPON, couponStatus, couponStats, describeCoupon, normalizeCoupon, randomCode, toLocalInput } from '../lib/coupons.js'
 import { applyVariants, normalizeVariants, variantErrors, videoFileError, isVideoLink, VIDEO_MAX_MB } from '../lib/variants.js'
 import { VideoThumb } from '../components/ProductMedia.jsx'
+import { EMPTY_REVIEW, MAX_REVIEW_IMAGES, normalizeReview, reviewError, reviewSummary, soldBonus } from '../lib/reviews.js'
 
 function useOrders() {
   const [list, setList] = useState(null)
@@ -143,7 +144,7 @@ function Orders() {
   )
 }
 
-const EMPTY = { name: '', sku: '', category: 'bjd-1-4', kind: 'doll', scale: '1/4', skin: 'trang-hong', gender: 'nu', set_type: 'fullset', stock_type: 'order', lead_days: 35, price: 0, compare_price: null, sizes: [], stock: 99, collection: null, tags: [], rating: 5, review_count: 0, sold: 0, description: '', images: [], videos: [], variants: [], active: true, look: { hair: 0, eye: 0, outfit: 0 } }
+const EMPTY = { name: '', sku: '', category: 'bjd-1-4', kind: 'doll', scale: '1/4', skin: 'trang-hong', gender: 'nu', set_type: 'fullset', stock_type: 'order', lead_days: 35, price: 0, compare_price: null, sizes: [], stock: 99, collection: null, tags: [], rating: 0, review_count: 0, sold: 0, sold_bonus: 0, description: '', images: [], videos: [], variants: [], active: true, look: { hair: 0, eye: 0, outfit: 0 } }
 function ImageManager({ images, onChange }) {
   const { toast } = useShop()
   const [busy, setBusy] = useState(0)
@@ -399,6 +400,7 @@ function ProductForm({ value, cost: cost0, settings, onClose, onSaved }) {
           {!hasVar && <Field label="Giá bán (₫)"><input className="input" value={p.price ? p.price.toLocaleString('vi-VN') : ''} onChange={e => set('price', num(e.target.value) || 0)} inputMode="numeric" /></Field>}
           {!hasVar && <Field label="Giá gốc trước giảm (₫)" hint="Để trống nếu không giảm giá"><input className="input" value={p.compare_price ? p.compare_price.toLocaleString('vi-VN') : ''} onChange={e => set('compare_price', num(e.target.value))} inputMode="numeric" /></Field>}
           {(!hasVar || p.stock_type === 'order') && <Field label="Tồn kho" hint="Hàng order: để số lớn (vd 99)"><input className="input" type="number" min="0" value={p.stock} onChange={e => set('stock', Math.max(0, parseInt(e.target.value) || 0))} /></Field>}
+          <Field label="Lượt mua cộng thêm" hint={`Đã bán hiển thị = ${p.sold_real || 0} thật (đơn đã giao) + số này`}><input className="input" value={p.sold_bonus || ''} placeholder="0" inputMode="numeric" onChange={e => set('sold_bonus', soldBonus(e.target.value))} /></Field>
           <Field label="Phong cách"><select className="input" value={p.collection || ''} onChange={e => set('collection', e.target.value || null)}><option value="">—</option>{COLLECTIONS.map(c => <option key={c.slug} value={c.slug}>{c.name}</option>)}</select></Field>
         </div>
         <ImageManager images={p.images || []} onChange={v => set('images', v)} />
@@ -498,7 +500,7 @@ function Products() {
       </div>
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th></th><th>Sản phẩm</th><th className="r">Nhập (¥)</th><th className="r">Giá vốn</th><th className="r">Giá bán</th><th className="r">Lãi</th><th className="r">Tồn</th><th>Trạng thái</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Sản phẩm</th><th className="r">Nhập (¥)</th><th className="r">Giá vốn</th><th className="r">Giá bán</th><th className="r">Lãi</th><th className="r">Tồn</th><th className="r">Đã bán</th><th>Trạng thái</th><th></th></tr></thead>
           <tbody>
             {shown.map(p => {
               const c = calcFor(p, costs[p.id], settings)
@@ -512,6 +514,7 @@ function Products() {
                   <td className="r">{vnd(p.price)}</td>
                   <td className={'r ' + (profit == null ? '' : profit < 0 ? 'bad-text' : 'ok-text')}>{profit == null ? '—' : `${Math.round(profit / c.cost * 100)}%`}</td>
                   <td className={'r' + (p.stock <= 2 ? ' bad-text' : '')}>{p.stock_type === 'order' ? '∞' : p.stock}</td>
+                  <td className="r" title={`${p.sold_real || 0} thật + ${p.sold_bonus || 0} cộng thêm`}>{p.sold || 0}</td>
                   <td>{p.active ? <Badge tone="ok">Đang bán</Badge> : <Badge>Ẩn</Badge>}</td>
                   <td className="nowrap">
                     <button className="link-btn" onClick={() => setEdit(p)}>Sửa</button>
@@ -820,6 +823,96 @@ function StoreForm({ value, onClose, onSaved }) {
   )
 }
 
+// Đánh giá: xem / xóa mọi đánh giá; tạo, sửa đánh giá của shop (nickname, ảnh, nội dung, số sao, ngày)
+function AdminReviews() {
+  const { toast, reloadProducts } = useShop()
+  const { all } = useAdminCatalog()
+  const [list, setList] = useState(null)
+  const [pid, setPid] = useState('')
+  const [edit, setEdit] = useState(null)
+  const load = () => api.admin.reviews().then(setList).catch(x => { toast(x.message, 'bad'); setList([]) })
+  useEffect(() => { load() }, [])
+  const byId = useMemo(() => Object.fromEntries((all || []).map(p => [p.id, p])), [all])
+  const shown = (list || []).filter(r => !pid || r.product_id === pid)
+  const s = reviewSummary(shown)
+  const del = async r => {
+    if (!confirm(`Xóa đánh giá của ${r.name}?`)) return
+    try { await api.admin.deleteReview(r.id); toast('Đã xóa đánh giá'); load(); reloadProducts() } catch (x) { toast(x.message, 'bad') }
+  }
+  return (
+    <div className="panel">
+      <div className="row-between wrap gap"><h3>Đánh giá</h3><button className="btn sm" onClick={() => setEdit({ ...EMPTY_REVIEW, product_id: pid })}>+ Tạo đánh giá</button></div>
+      <p className="muted small">Khách chỉ đánh giá được sản phẩm trong đơn đã giao (mỗi đơn một lần, có nhãn "Đã mua hàng"). Shop tự tạo đánh giá với nickname, ảnh, nội dung, số sao. Điểm trung bình và số đánh giá trên trang sản phẩm tự cập nhật.</p>
+      <div className="row gap wrap mb">
+        <select className="input auto grow" value={pid} onChange={e => setPid(e.target.value)}><option value="">Mọi sản phẩm</option>{(all || []).map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}</select>
+        {s.count > 0 && <span className="small"><Stars value={s.avg} /> {s.avg.toFixed(1)} · {s.count} đánh giá · {[5, 4, 3, 2, 1].map(n => `${n}★ ${s.pct[n]}%`).join(' · ')}</span>}
+      </div>
+      {!list ? <Spinner /> : !shown.length ? <p className="muted">Chưa có đánh giá nào.</p> : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Sản phẩm</th><th>Người đánh giá</th><th>Sao</th><th>Nội dung</th><th>Ngày</th><th /></tr></thead>
+            <tbody>{shown.map(r => (
+              <tr key={r.id}>
+                <td>{byId[r.product_id]?.name || r.product_id}</td>
+                <td>{r.name}<br />{r.by_shop ? <Badge>Shop tạo</Badge> : r.order_id ? <Badge tone="ok">Đã mua hàng</Badge> : <Badge>Khách</Badge>}</td>
+                <td className="nowrap"><Stars value={r.rating} size={12} /></td>
+                <td className="small">{r.content}{r.images?.length > 0 && <div className="review-imgs sm">{r.images.map((src, i) => <img key={i} src={src} alt="" />)}</div>}</td>
+                <td className="nowrap small">{date(r.created_at)}</td>
+                <td className="r nowrap">{r.by_shop && <><button className="link-btn" onClick={() => setEdit({ ...r, created_at: r.created_at.slice(0, 10) })}>Sửa</button> · </>}<button className="link-btn danger" onClick={() => del(r)}>Xóa</button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      {edit && <ReviewForm value={edit} products={all || []} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); reloadProducts() }} />}
+    </div>
+  )
+}
+
+function ReviewForm({ value, products, onClose, onSaved }) {
+  const { toast } = useShop()
+  const [r, setR] = useState(value)
+  const [busy, setBusy] = useState(false)
+  const set = (k, v) => setR(x => ({ ...x, [k]: v }))
+  const max = MAX_REVIEW_IMAGES.shop
+  const addImages = async files => {
+    const list = [...files].filter(f => f.type.startsWith('image/')).slice(0, max - (r.images || []).length)
+    if (!list.length) return
+    setBusy(true)
+    try { const got = []; for (const f of list) got.push(await api.uploadReviewImage(f)); set('images', [...(r.images || []), ...got]) } catch (x) { toast(x.message, 'bad') } finally { setBusy(false) }
+  }
+  const save = async e => {
+    e.preventDefault()
+    const err = reviewError(normalizeReview(r, { shop: true }), { shop: true }); if (err) return toast(err, 'bad')
+    setBusy(true)
+    try { await api.admin.saveReview(r); toast('Đã lưu đánh giá'); onSaved() } catch (x) { toast(x.message, 'bad') } finally { setBusy(false) }
+  }
+  return (
+    <Modal title={r.id ? 'Sửa đánh giá' : 'Tạo đánh giá'} onClose={onClose}>
+      <form onSubmit={save} className="product-form">
+        <Field label="Sản phẩm *"><select className="input" value={r.product_id} onChange={e => set('product_id', e.target.value)}><option value="">— Chọn sản phẩm —</option>{products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}</select></Field>
+        <div className="form-grid">
+          <Field label="Nickname *"><input className="input" value={r.name} maxLength={60} onChange={e => set('name', e.target.value)} placeholder="vd: Mây nhỏ" /></Field>
+          <Field label="Ngày đánh giá" hint="Để trống = hôm nay"><input className="input" type="date" value={r.created_at || ''} onChange={e => set('created_at', e.target.value)} /></Field>
+        </div>
+        <Field label="Số sao">
+          <div className="star-pick" role="radiogroup" aria-label="Số sao">
+            {[1, 2, 3, 4, 5].map(n => <button type="button" key={n} className={n <= r.rating ? 'on' : ''} onClick={() => set('rating', n)} aria-label={n + ' sao'} aria-checked={n === r.rating} role="radio">★</button>)}
+          </div>
+        </Field>
+        <Field label="Nội dung *"><textarea className="input" rows={4} maxLength={1000} value={r.content} onChange={e => set('content', e.target.value)} /></Field>
+        <Field label={`Hình ảnh (${(r.images || []).length}/${max})`}>
+          <div className="review-imgs">
+            {(r.images || []).map((src, i) => <span key={i} className="review-img-edit"><img src={src} alt={'Ảnh ' + (i + 1)} /><button type="button" onClick={() => set('images', r.images.filter((_, k) => k !== i))} aria-label="Bỏ ảnh">✕</button></span>)}
+            {(r.images || []).length < max && <label className="review-img-add">{busy ? '…' : '+ Ảnh'}<input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={e => { addImages(e.target.files); e.target.value = '' }} /></label>}
+          </div>
+        </Field>
+        <button className="btn" disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu đánh giá'}</button>
+      </form>
+    </Modal>
+  )
+}
+
 function ChatTab() {
   const n = useChatUnread()
   return <NavLink to="/quan-tri/tin-nhan">Tin nhắn{n > 0 && <span className="pill bad">{n}</span>}</NavLink>
@@ -841,6 +934,7 @@ export default function Admin() {
         <NavLink to="/quan-tri/don-hang">Đơn hàng</NavLink>
         <NavLink to="/quan-tri/san-pham">Sản phẩm</NavLink>
         <NavLink to="/quan-tri/ma-giam-gia">Mã giảm giá</NavLink>
+        <NavLink to="/quan-tri/danh-gia">Đánh giá</NavLink>
         <NavLink to="/quan-tri/gia-nhap">Tính giá nhập</NavLink>
         <NavLink to="/quan-tri/khach-hang">Khách hàng</NavLink>
         <ChatTab />
@@ -852,6 +946,7 @@ export default function Admin() {
         <Route path="don-hang" element={<Orders />} />
         <Route path="san-pham" element={<Products />} />
         <Route path="ma-giam-gia" element={<Coupons />} />
+        <Route path="danh-gia" element={<AdminReviews />} />
         <Route path="gia-nhap" element={<ImportCalc />} />
         <Route path="khach-hang" element={<Customers />} />
         <Route path="tin-nhan" element={<AdminChat />} />
