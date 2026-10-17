@@ -17,7 +17,7 @@ export function Guide() {
         <h3>2. Full set hay Nude?</h3>
         <p><b>Full set</b> có sẵn tóc giả, mắt, trang phục, giày và makeup như ảnh — hợp người mới. <b>Nude</b> chỉ gồm thân + đầu đã makeup và mắt mặc định, rẻ hơn, để bạn tự phối đồ.</p>
         <h3>3. Hàng có sẵn hay đặt trước?</h3>
-        <p>Hàng <b>có sẵn</b> đã ở Việt Nam, giao 1–3 ngày. Hàng <b>đặt trước</b> do xưởng đúc theo đơn, về khoảng 25–60 ngày; cọc 50% khi chốt đơn, trả phần còn lại khi hàng về. Shop báo tiến độ trên trang đơn hàng.</p>
+        <p>Hàng <b>có sẵn</b> đã ở Việt Nam, giao 1–3 ngày. Hàng <b>đặt trước</b> do xưởng đúc theo đơn, về khoảng 25–60 ngày; cọc từ 50% khi chốt đơn (khách tự chọn mức), trả phần còn lại khi hàng về. Shop báo tiến độ trên trang đơn hàng.</p>
         <h3>4. Phụ kiện cần đúng số đo</h3>
         <p>Tóc giả chọn theo <b>chu vi đầu</b> (inch), mắt theo <b>đường kính</b> (mm), quần áo và giày theo <b>tỉ lệ</b> của búp bê. Các hãng có thể chênh nhau — hỏi shop nếu chưa chắc.</p>
         <h3>5. Bảo quản resin</h3>
@@ -67,7 +67,7 @@ const POLICIES = {
   ]],
   'dat-truoc': ['Chính sách đặt trước (order)', [
     'Hàng đặt trước do xưởng sản xuất theo đơn. Thời gian dự kiến ghi trên từng sản phẩm (thường 25 – 60 ngày tính từ khi nhận cọc).',
-    'Đặt cọc 50% giá trị đơn khi chốt; thanh toán phần còn lại khi hàng về kho Việt Nam, shop gửi ảnh thực tế trước khi giao.',
+    'Đặt cọc từ 50% giá trị đơn khi chốt (khách tự chọn mức trả trước); thanh toán phần còn lại khi hàng về kho Việt Nam, shop gửi ảnh thực tế trước khi giao.',
     'Hoàn 100% tiền cọc nếu xưởng không giao được hoặc trễ quá 30 ngày so với thời gian hẹn. Khách tự hủy sau khi xưởng đã sản xuất: không hoàn cọc.',
     'Đơn có hàng đặt trước không áp dụng thanh toán khi nhận hàng (COD).',
   ]],

@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { api, DEMO } from '../lib/api.js'
 import { useShop } from '../lib/store.jsx'
 import { vnd, dateTime, ORDER_STATUS, PAYMENT_STATUS, paymentName } from '../lib/format.js'
-import { amountDue } from '../lib/pricing.js'
+import { amountDue, paidOf } from '../lib/pricing.js'
 import { Badge, Breadcrumb, Empty, Icon, Spinner, Field } from '../components/ui.jsx'
 import { rememberOrderPhone } from './Checkout.jsx'
 
@@ -21,7 +21,12 @@ export function OrderView({ order, onChange }) {
   const online = ['vnpay', 'momo'].includes(order.payment_method)
   const due = amountDue(order)
   const unpaid = due > 0
-  const dueLabel = order.deposit > 0 ? (order.payment_status === 'da_coc' ? 'phần còn lại' : 'tiền cọc') : 'đơn hàng'
+  const paid = paidOf(order)
+  const dueLabel = order.deposit > 0 && order.payment_status !== 'da_coc' ? (paid > 0 ? 'phần cọc còn thiếu' : 'tiền cọc') : paid > 0 ? 'phần còn lại' : 'đơn hàng'
+  const transferNote = order.code + (order.payment_status === 'da_coc' ? ' CON LAI' : order.deposit ? ' COC' : '')
+  const demoTransfer = async () => {
+    try { await api.demoBankTransfer(order.code, due); toast('Giả lập: shop đã nhận ' + vnd(due)); onChange?.() } catch (e) { toast(e.message, 'bad') }
+  }
   const stepIdx = STEPS.indexOf(order.status)
   const label = order.delivery === 'pickup' ? { dang_giao: 'Sẵn sàng nhận', da_giao: 'Đã nhận hàng' } : {}
 
@@ -49,7 +54,7 @@ export function OrderView({ order, onChange }) {
 
       {unpaid && order.payment_method === 'bank' && (
         <div className="panel qr-box">
-          <img src={`https://img.vietqr.io/image/${BANK.id}-${BANK.acc}-compact2.png?amount=${due}&addInfo=${encodeURIComponent(order.code + (order.payment_status === 'da_coc' ? ' CON LAI' : order.deposit ? ' COC' : ''))}&accountName=${encodeURIComponent(BANK.name)}`} alt="Mã QR chuyển khoản" width="220" height="220" />
+          <img src={`https://img.vietqr.io/image/${BANK.id}-${BANK.acc}-compact2.png?amount=${due}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(BANK.name)}`} alt="Mã QR chuyển khoản" width="220" height="220" />
           <div>
             <h3>Quét mã để chuyển {dueLabel}</h3>
             <table className="table compact"><tbody>
@@ -57,14 +62,15 @@ export function OrderView({ order, onChange }) {
               <tr><th>Số tài khoản</th><td><b>{BANK.acc}</b> <button className="link-btn" onClick={() => { navigator.clipboard?.writeText(BANK.acc); toast('Đã sao chép') }}>Sao chép</button></td></tr>
               <tr><th>Chủ tài khoản</th><td>{BANK.name}</td></tr>
               <tr><th>Số tiền</th><td><b className="accent">{vnd(due)}</b></td></tr>
-              <tr><th>Nội dung</th><td><b>{order.code + (order.payment_status === 'da_coc' ? ' CON LAI' : order.deposit ? ' COC' : '')}</b></td></tr>
+              <tr><th>Nội dung</th><td><b>{transferNote}</b></td></tr>
             </tbody></table>
-            <p className="muted small">Đơn sẽ được xác nhận ngay khi nhận được tiền. Giữ nguyên nội dung chuyển khoản để đối soát tự động.</p>
+            <p className="muted small">Hệ thống tự xác nhận đơn ngay khi tiền về tài khoản shop (trang này tự cập nhật). Giữ nguyên nội dung chuyển khoản <b>{order.code}</b> để đối soát tự động.</p>
+            {DEMO && <button className="btn ghost sm" onClick={demoTransfer}>Giả lập: khách đã chuyển {vnd(due)}</button>}
           </div>
         </div>
       )}
       {unpaid && online && <div className="notice warn row-between wrap gap"><span>Cần thanh toán {dueLabel} <b>{vnd(due)}</b> qua {order.payment_method === 'vnpay' ? 'VNPay' : 'MoMo'}.</span><button className="btn sm" onClick={pay} disabled={busy}>{busy ? 'Đang chuyển…' : 'Thanh toán ngay'}</button></div>}
-      {order.deposit > 0 && order.payment_status === 'da_coc' && <div className="notice">Đã nhận cọc <b>{vnd(order.deposit)}</b>. Shop báo khi hàng về để thanh toán phần còn lại <b>{vnd(order.total - order.deposit)}</b>.</div>}
+      {order.deposit > 0 && order.payment_status === 'da_coc' && <div className="notice">Đã nhận trả trước <b>{vnd(paid)}</b>. Shop báo khi hàng về để thanh toán phần còn lại <b>{vnd(order.total - paid)}</b>.</div>}
 
       <div className="order-cols">
         <div className="panel">
@@ -89,7 +95,8 @@ export function OrderView({ order, onChange }) {
           {order.discount > 0 && <div className="row-between ok-text"><span>Giảm giá {order.coupon_code && `(${order.coupon_code})`}</span><span>−{vnd(order.discount)}</span></div>}
           <div className="row-between"><span>Phí giao hàng</span><span>{order.shipping_fee ? vnd(order.shipping_fee) : 'Miễn phí'}</span></div>
           <div className="row-between total"><span>Tổng cộng</span><b className="accent">{vnd(order.total)}</b></div>
-          {order.deposit > 0 && <div className="row-between small muted"><span>Cọc 50% / còn lại</span><span>{vnd(order.deposit)} / {vnd(order.total - order.deposit)}</span></div>}
+          {order.deposit > 0 && <div className="row-between small muted"><span>Trả trước {Math.round(order.deposit / order.total * 100)}% / còn lại</span><span>{vnd(order.deposit)} / {vnd(order.total - order.deposit)}</span></div>}
+          {paid > 0 && <div className="row-between small ok-text"><span>Đã trả</span><span>{vnd(paid)}</span></div>}
         </div>
       </div>
 
@@ -101,7 +108,7 @@ export function OrderView({ order, onChange }) {
           </ul>
         </div>
       )}
-      {order.status === 'cho_xac_nhan' && order.payment_status !== 'da_thanh_toan' && user && (user.id === order.user_id || user.role === 'admin') && (
+      {order.status === 'cho_xac_nhan' && order.payment_status !== 'da_thanh_toan' && !paid && user && (user.id === order.user_id || user.role === 'admin') && (
         <button className="btn ghost danger" onClick={cancel}>Hủy đơn hàng</button>
       )}
     </div>
@@ -111,8 +118,23 @@ export function OrderView({ order, onChange }) {
 export function OrderPage() {
   const { code } = useParams()
   const [order, setOrder] = useState(undefined)
+  const { toast } = useShop()
   const load = () => api.order(code, storedPhone(code)).then(setOrder).catch(() => setOrder(null))
   useEffect(() => { load() }, [code]) // eslint-disable-line
+  // Chờ chuyển khoản: hỏi lại mỗi 10 giây để thấy ngay khi hệ thống nhận được tiền
+  const waiting = !!order && order.payment_method === 'bank' && amountDue(order) > 0
+  useEffect(() => {
+    if (!waiting) return
+    const t = setInterval(() => { if (document.visibilityState === 'visible') api.order(code, storedPhone(code)).then(o => o && setOrder(o)).catch(() => {}) }, 10000)
+    return () => clearInterval(t)
+  }, [waiting, code])
+  const lastPaid = useRef(null)
+  useEffect(() => {
+    if (!order) return
+    const p = paidOf(order)
+    if (lastPaid.current !== null && p > lastPaid.current) toast(order.status === 'da_xac_nhan' ? 'Đã nhận thanh toán — đơn hàng đã được xác nhận' : 'Đã nhận thanh toán ' + vnd(p - lastPaid.current))
+    lastPaid.current = p
+  }, [order, toast])
   if (order === undefined) return <div className="container pad-l"><Spinner /></div>
   if (!order) return <div className="container"><Empty text="Không xem được đơn hàng này. Hãy tra cứu bằng mã đơn và số điện thoại."><Link to={'/tra-cuu-don-hang?ma=' + code} className="btn">Tra cứu đơn hàng</Link></Empty></div>
   const fresh = Date.now() - new Date(order.created_at).getTime() < 30 * 60 * 1000

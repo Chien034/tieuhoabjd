@@ -9,6 +9,11 @@ alter table public.products drop constraint if exists products_variants_array;
 alter table public.products add constraint products_variants_array check (jsonb_typeof(variants) = 'array');
 alter table public.order_items add column if not exists variant_id text not null default '';
 alter table public.order_items add column if not exists variant text not null default '';
+-- Số tiền khách đã trả (cộng dồn qua các lần chuyển khoản / cổng thanh toán)
+alter table public.orders add column if not exists paid_amount bigint not null default 0;
+-- Đơn có từ trước khi có cột này: suy ra số đã trả từ trạng thái thanh toán
+update public.orders set paid_amount = case payment_status when 'da_coc' then deposit else total end
+ where paid_amount = 0 and payment_status in ('da_coc', 'da_thanh_toan');
 
 -- ---------------------------------------------------------------- ĐẶT HÀNG THEO BIẾN THỂ
 -- Cộng / trừ tồn kho của một biến thể trong products.variants (không xuống dưới 0)
@@ -27,7 +32,7 @@ declare
   v_order uuid; v_code text; v_sub bigint := 0; v_disc bigint := 0; v_ship bigint := 0;
   v_cfg public.settings; v_c public.coupons; v_free boolean := false;
   it jsonb; pr public.products; v_qty int; v_size text; v_n int := 0; v_pre boolean := false; v_total bigint;
-  v_vid text; v_vname text; v_vstock int; v_price bigint;
+  v_vid text; v_vname text; v_vstock int; v_price bigint; v_min bigint; v_dep bigint := 0;
   v_phone text := regexp_replace(coalesce(p->>'phone', ''), '[\s.-]', '', 'g');
   v_delivery text := coalesce(p->>'delivery', 'ship');
 begin
@@ -38,6 +43,7 @@ begin
   if v_delivery = 'pickup' and not exists (select 1 from public.stores where id = (p->>'store_id')::int) then raise exception 'Cửa hàng không hợp lệ'; end if;
   if jsonb_typeof(p->'items') <> 'array' or jsonb_array_length(p->'items') = 0 then raise exception 'Giỏ hàng trống'; end if;
   if jsonb_array_length(p->'items') > 30 then raise exception 'Quá nhiều sản phẩm trong một đơn'; end if;
+  if coalesce(p->>'deposit', '') <> '' and p->>'deposit' !~ '^\d{1,12}$' then raise exception 'Số tiền trả trước không hợp lệ'; end if;
 
   select * into v_cfg from public.settings where id = 1;
   v_code := 'HK' || to_char(now() at time zone 'Asia/Ho_Chi_Minh', 'YYMMDD') || lpad((floor(random() * 100000))::int::text, 5, '0');
@@ -105,8 +111,16 @@ begin
   end if;
   v_ship := case when v_delivery = 'pickup' or v_free or v_sub >= v_cfg.free_ship_from then 0 else v_cfg.shipping_fee end;
   v_total := v_sub - v_disc + v_ship;
-  update public.orders set subtotal = v_sub, discount = v_disc, shipping_fee = v_ship, total = v_total,
-         deposit = case when v_pre then ceil(v_total * 0.5 / 1000.0)::bigint * 1000 else 0 end,
+  -- Hàng đặt trước: khách trả trước ít nhất 50% (làm tròn lên nghìn đồng), không quá tổng đơn. Trả đủ = trả một lần (deposit 0).
+  if v_pre then
+    v_min := least(v_total, ceil(v_total * 0.5 / 1000.0)::bigint * 1000);
+    v_dep := coalesce(nullif(p->>'deposit', '')::bigint, v_min);
+    if v_dep < v_min or v_dep > v_total then
+      raise exception 'Số tiền trả trước từ % ₫ (50%%) đến % ₫', replace(to_char(v_min, 'FM999,999,999,999'), ',', '.'), replace(to_char(v_total, 'FM999,999,999,999'), ',', '.');
+    end if;
+    if v_dep >= v_total then v_dep := 0; end if;
+  end if;
+  update public.orders set subtotal = v_sub, discount = v_disc, shipping_fee = v_ship, total = v_total, deposit = v_dep,
          coupon_code = case when v_c.code is not null then v_c.code end
    where id = v_order;
   insert into public.order_events (order_id, status, note) values (v_order, 'cho_xac_nhan', 'Đặt hàng thành công');
@@ -128,6 +142,10 @@ begin
          where p.id = r.product_id;
       end loop;
     end if;
+  end if;
+  if new.payment_status is distinct from old.payment_status then
+    if new.payment_status = 'da_coc' then new.paid_amount := greatest(new.paid_amount, new.deposit); end if;
+    if new.payment_status = 'da_thanh_toan' then new.paid_amount := greatest(new.paid_amount, new.total); end if;
   end if;
   if new.payment_status = 'da_thanh_toan' and old.payment_status is distinct from 'da_thanh_toan' then
     new.paid_at := now();

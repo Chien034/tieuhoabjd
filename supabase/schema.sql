@@ -137,7 +137,8 @@ create table if not exists public.orders (
   discount bigint not null default 0,
   shipping_fee bigint not null default 0,
   total bigint not null,
-  deposit bigint not null default 0,  -- tiền cọc (đơn có hàng đặt trước), 0 = trả một lần
+  deposit bigint not null default 0,  -- tiền trả trước khách chọn (đơn có hàng đặt trước, tối thiểu 50%), 0 = trả một lần
+  paid_amount bigint not null default 0,  -- số tiền khách đã trả (cộng dồn)
   coupon_code text,
   payment_method text not null check (payment_method in ('cod', 'bank', 'vnpay', 'momo')),
   payment_status text not null default 'chua_thanh_toan' check (payment_status in ('chua_thanh_toan', 'da_coc', 'da_thanh_toan', 'that_bai', 'hoan_tien')),
@@ -166,6 +167,11 @@ alter table public.products drop constraint if exists products_variants_array;
 alter table public.products add constraint products_variants_array check (jsonb_typeof(variants) = 'array');
 alter table public.order_items add column if not exists variant_id text not null default '';
 alter table public.order_items add column if not exists variant text not null default '';
+-- Số tiền khách đã trả (cộng dồn qua các lần chuyển khoản / cổng thanh toán)
+alter table public.orders add column if not exists paid_amount bigint not null default 0;
+-- Đơn có từ trước khi có cột này: suy ra số đã trả từ trạng thái thanh toán
+update public.orders set paid_amount = case payment_status when 'da_coc' then deposit else total end
+ where paid_amount = 0 and payment_status in ('da_coc', 'da_thanh_toan');
 
 create table if not exists public.order_events (
   id bigserial primary key,
@@ -258,13 +264,14 @@ language sql immutable as $$
 $$;
 
 -- Máy chủ tính lại toàn bộ giá, kiểm tra tồn kho (khóa dòng), trừ kho, ghi đơn. Trả về mã đơn.
+-- p->>'deposit': số tiền khách muốn trả trước (hàng đặt trước), từ 50% (làm tròn lên nghìn đồng) đến tổng đơn.
 create or replace function public.place_order(p jsonb) returns text
 language plpgsql security definer set search_path = public as $$
 declare
   v_order uuid; v_code text; v_sub bigint := 0; v_disc bigint := 0; v_ship bigint := 0;
   v_cfg public.settings; v_c public.coupons; v_free boolean := false;
   it jsonb; pr public.products; v_qty int; v_size text; v_n int := 0; v_pre boolean := false; v_total bigint;
-  v_vid text; v_vname text; v_vstock int; v_price bigint;
+  v_vid text; v_vname text; v_vstock int; v_price bigint; v_min bigint; v_dep bigint := 0;
   v_phone text := regexp_replace(coalesce(p->>'phone', ''), '[\s.-]', '', 'g');
   v_delivery text := coalesce(p->>'delivery', 'ship');
 begin
@@ -275,6 +282,7 @@ begin
   if v_delivery = 'pickup' and not exists (select 1 from public.stores where id = (p->>'store_id')::int) then raise exception 'Cửa hàng không hợp lệ'; end if;
   if jsonb_typeof(p->'items') <> 'array' or jsonb_array_length(p->'items') = 0 then raise exception 'Giỏ hàng trống'; end if;
   if jsonb_array_length(p->'items') > 30 then raise exception 'Quá nhiều sản phẩm trong một đơn'; end if;
+  if coalesce(p->>'deposit', '') <> '' and p->>'deposit' !~ '^\d{1,12}$' then raise exception 'Số tiền trả trước không hợp lệ'; end if;
 
   select * into v_cfg from public.settings where id = 1;
   v_code := 'HK' || to_char(now() at time zone 'Asia/Ho_Chi_Minh', 'YYMMDD') || lpad((floor(random() * 100000))::int::text, 5, '0');
@@ -342,8 +350,16 @@ begin
   end if;
   v_ship := case when v_delivery = 'pickup' or v_free or v_sub >= v_cfg.free_ship_from then 0 else v_cfg.shipping_fee end;
   v_total := v_sub - v_disc + v_ship;
-  update public.orders set subtotal = v_sub, discount = v_disc, shipping_fee = v_ship, total = v_total,
-         deposit = case when v_pre then ceil(v_total * 0.5 / 1000.0)::bigint * 1000 else 0 end,
+  -- Hàng đặt trước: khách trả trước ít nhất 50% (làm tròn lên nghìn đồng), không quá tổng đơn. Trả đủ = trả một lần (deposit 0).
+  if v_pre then
+    v_min := least(v_total, ceil(v_total * 0.5 / 1000.0)::bigint * 1000);
+    v_dep := coalesce(nullif(p->>'deposit', '')::bigint, v_min);
+    if v_dep < v_min or v_dep > v_total then
+      raise exception 'Số tiền trả trước từ % ₫ (50%%) đến % ₫', replace(to_char(v_min, 'FM999,999,999,999'), ',', '.'), replace(to_char(v_total, 'FM999,999,999,999'), ',', '.');
+    end if;
+    if v_dep >= v_total then v_dep := 0; end if;
+  end if;
+  update public.orders set subtotal = v_sub, discount = v_disc, shipping_fee = v_ship, total = v_total, deposit = v_dep,
          coupon_code = case when v_c.code is not null then v_c.code end
    where id = v_order;
   insert into public.order_events (order_id, status, note) values (v_order, 'cho_xac_nhan', 'Đặt hàng thành công');
@@ -364,7 +380,8 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.track_order(text, text) to anon, authenticated;
 
--- Hoàn kho khi hủy (chỉ hàng có sẵn, cả tồn của biến thể); ghi thời điểm thanh toán
+-- Hoàn kho khi hủy (chỉ hàng có sẵn, cả tồn của biến thể); ghi thời điểm thanh toán;
+-- quản trị bấm "Đã nhận cọc / Đã nhận đủ tiền" thì số đã trả cũng cập nhật theo.
 create or replace function public.order_changed() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare r record;
@@ -379,6 +396,10 @@ begin
       end loop;
     end if;
   end if;
+  if new.payment_status is distinct from old.payment_status then
+    if new.payment_status = 'da_coc' then new.paid_amount := greatest(new.paid_amount, new.deposit); end if;
+    if new.payment_status = 'da_thanh_toan' then new.paid_amount := greatest(new.paid_amount, new.total); end if;
+  end if;
   if new.payment_status = 'da_thanh_toan' and old.payment_status is distinct from 'da_thanh_toan' then
     new.paid_at := now();
   end if;
@@ -388,13 +409,14 @@ end $$;
 drop trigger if exists order_changed on public.orders;
 create trigger order_changed before update on public.orders for each row execute function public.order_changed();
 
+-- Khách tự hủy: chỉ khi chưa xác nhận và chưa trả đồng nào
 create or replace function public.cancel_my_order(p_code text, p_reason text) returns void
 language plpgsql security definer set search_path = public as $$
 declare o public.orders;
 begin
   select * into o from public.orders where code = p_code and user_id = auth.uid() for update;
   if not found then raise exception 'Không tìm thấy đơn hàng'; end if;
-  if o.status <> 'cho_xac_nhan' or o.payment_status in ('da_thanh_toan', 'da_coc') then
+  if o.status <> 'cho_xac_nhan' or o.payment_status in ('da_thanh_toan', 'da_coc') or o.paid_amount > 0 then
     raise exception 'Đơn đã được xác nhận hoặc đã thanh toán, vui lòng gọi hotline để hủy';
   end if;
   update public.orders set status = 'da_huy' where id = o.id;
@@ -420,34 +442,33 @@ begin
 end $$;
 grant execute on function public.admin_update_order(uuid, text, text, text) to authenticated;
 
--- Số tiền cần trả ở lần thanh toán kế tiếp (cọc, phần còn lại, hoặc cả đơn)
+-- Số tiền cần trả ở lần thanh toán kế tiếp: phần cọc còn thiếu, hoặc phần còn lại của đơn.
 create or replace function public.amount_due(o public.orders) returns bigint
 language sql immutable as $$
   select case
-    when o.status = 'da_huy' then 0
-    when o.payment_status in ('chua_thanh_toan', 'that_bai') then case when o.deposit > 0 then o.deposit else o.total end
-    when o.payment_status = 'da_coc' then o.total - o.deposit
-    else 0 end
+    when o.status = 'da_huy' or o.payment_status in ('da_thanh_toan', 'hoan_tien') then 0
+    else greatest(0, case when o.deposit > 0 and o.payment_status in ('chua_thanh_toan', 'that_bai') then o.deposit else o.total end - o.paid_amount)
+  end
 $$;
 
--- Chỉ máy chủ (service_role, trong /api) được gọi: ghi nhận kết quả từ cổng thanh toán.
+-- Chỉ máy chủ (service_role, trong /api) được gọi: ghi nhận kết quả từ cổng VNPay / MoMo.
 -- Số tiền phải đúng bằng số cần trả lúc đó (cọc hoặc phần còn lại hoặc cả đơn).
 create or replace function public.record_payment(p_code text, p_amount bigint, p_ok boolean, p_ref text, p_gateway text)
 returns text language plpgsql security definer set search_path = public as $$
-declare o public.orders; v_due bigint; v_next text;
+declare o public.orders; v_due bigint;
 begin
   select * into o from public.orders where code = p_code for update;
   if not found then return 'not_found'; end if;
   -- Cùng một mã giao dịch gửi lại (khách tải lại trang kết quả, cổng gửi IPN lặp) → không ghi lần hai
-  if coalesce(p_ref, '') <> '' and o.payment_ref = p_ref then return 'already'; end if;
+  if coalesce(p_ref, '') <> '' and (o.payment_ref = p_ref or exists (select 1 from public.payments where gateway = p_gateway and ref = p_ref)) then return 'already'; end if;
   v_due := public.amount_due(o);
   if v_due = 0 then return 'already'; end if;
   if v_due <> p_amount then return 'bad_amount'; end if;
   if p_ok then
-    v_next := case when o.deposit > 0 and o.payment_status <> 'da_coc' then 'da_coc' else 'da_thanh_toan' end;
-    update public.orders set payment_status = v_next, payment_ref = p_ref where id = o.id;
-    insert into public.order_events (order_id, status, note)
-    values (o.id, 'thanh_toan', 'Thanh toán ' || case when v_next = 'da_coc' then 'cọc ' else '' end || p_gateway || ' thành công, mã GD ' || coalesce(p_ref, ''));
+    insert into public.payments (gateway, ref, order_code, amount, result)
+    values (p_gateway, coalesce(nullif(p_ref, ''), o.code || '-' || extract(epoch from now())::bigint), o.code, p_amount, 'ok')
+    on conflict (gateway, ref) do nothing;
+    perform public.apply_payment(o.id, p_amount, p_gateway, p_ref);
   else
     update public.orders set payment_status = 'that_bai' where id = o.id and payment_status = 'chua_thanh_toan';
     insert into public.order_events (order_id, status, note) values (o.id, 'thanh_toan', 'Thanh toán ' || p_gateway || ' không thành công');
@@ -456,6 +477,130 @@ begin
 end $$;
 revoke execute on function public.record_payment(text, bigint, boolean, text, text) from public, anon, authenticated;
 grant execute on function public.record_payment(text, bigint, boolean, text, text) to service_role;
+
+-- ---------------------------------------------------------------- TIỀN VỀ & TỰ XÁC NHẬN (giống supabase/coc-tu-xac-nhan.sql)
+-- Mọi khoản tiền nhận được (chuyển khoản báo qua SePay, VNPay, MoMo). Mỗi giao dịch chỉ ghi một lần.
+create table if not exists public.payments (
+  id bigserial primary key,
+  gateway text not null,
+  ref text not null,                       -- mã giao dịch của ngân hàng / cổng
+  order_code text,                         -- mã đơn tìm được trong nội dung (null = không khớp đơn nào)
+  amount bigint not null,
+  content text not null default '',
+  result text not null default '',         -- ok | khong_khop
+  created_at timestamptz not null default now(),
+  unique (gateway, ref)
+);
+create index if not exists payments_order_idx on public.payments (order_code);
+
+-- Thông báo cho shop trong Quản trị (tiền về, đơn tự xác nhận, chuyển khoản không khớp đơn)
+create table if not exists public.shop_notices (
+  id bigserial primary key,
+  kind text not null default 'thanh_toan',
+  order_code text,
+  title text not null,
+  body text not null default '',
+  seen boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists shop_notices_created_idx on public.shop_notices (created_at desc);
+
+alter table public.payments enable row level security;
+alter table public.shop_notices enable row level security;
+drop policy if exists "admin xem" on public.payments;
+drop policy if exists "admin xem" on public.shop_notices;
+drop policy if exists "admin đánh dấu đã xem" on public.shop_notices;
+create policy "admin xem" on public.payments for select using (public.is_admin());
+create policy "admin xem" on public.shop_notices for select using (public.is_admin());
+create policy "admin đánh dấu đã xem" on public.shop_notices for update using (public.is_admin()) with check (public.is_admin());
+revoke all on public.payments from anon, authenticated;
+revoke all on public.shop_notices from anon, authenticated;
+grant select on public.payments to authenticated;
+grant select on public.shop_notices to authenticated;
+grant update (seen) on public.shop_notices to authenticated;
+
+-- Bật realtime để thông báo hiện ngay trong Quản trị
+do $$ begin
+  alter publication supabase_realtime add table public.shop_notices;
+exception
+  when duplicate_object then null;  -- đã bật rồi
+  when undefined_object then raise notice 'Chưa có publication supabase_realtime — Quản trị tự kiểm tra thông báo mỗi 30 giây.';
+end $$;
+
+create or replace function public.fmt_vnd(n bigint) returns text
+language sql immutable as $$ select replace(to_char(n, 'FM999,999,999,999'), ',', '.') || ' ₫' $$;
+
+
+-- Cộng một khoản tiền vào đơn. Đủ cọc → "Đã đặt cọc", đủ tổng → "Đã thanh toán";
+-- đơn đang "Chờ xác nhận" thì tự chuyển "Đã xác nhận". Ghi lịch sử đơn và báo shop.
+create or replace function public.apply_payment(p_id uuid, p_amount bigint, p_gateway text, p_ref text)
+returns text language plpgsql security definer set search_path = public as $$
+declare o public.orders; v_paid bigint; v_next text; v_status text; v_need bigint; v_note text; v_title text;
+begin
+  select * into o from public.orders where id = p_id for update;
+  if not found then return 'not_found'; end if;
+  v_paid := o.paid_amount + p_amount;
+  v_next := case
+    when o.payment_status in ('da_thanh_toan', 'hoan_tien') then o.payment_status
+    when v_paid >= o.total then 'da_thanh_toan'
+    when o.deposit > 0 and v_paid >= o.deposit then 'da_coc'
+    when o.payment_status = 'that_bai' then 'chua_thanh_toan'
+    else o.payment_status end;
+  v_status := case when o.status = 'cho_xac_nhan' and v_next in ('da_coc', 'da_thanh_toan') then 'da_xac_nhan' else o.status end;
+  update public.orders set paid_amount = v_paid, payment_status = v_next, status = v_status,
+         payment_ref = coalesce(nullif(p_ref, ''), payment_ref)
+   where id = o.id;
+
+  v_need := case when v_next in ('chua_thanh_toan', 'that_bai') and o.deposit > 0 then o.deposit else o.total end;
+  v_note := 'Nhận ' || public.fmt_vnd(p_amount) || ' qua ' || p_gateway || coalesce(' (mã GD ' || nullif(p_ref, '') || ')', '')
+         || '. Đã trả ' || public.fmt_vnd(v_paid) || ' / ' || public.fmt_vnd(o.total)
+         || case when v_next in ('chua_thanh_toan', 'that_bai') then ', còn thiếu ' || public.fmt_vnd(v_need - v_paid) || case when v_need < o.total then ' tiền cọc' else '' end
+                 when v_next = 'da_coc' then ', còn lại ' || public.fmt_vnd(o.total - v_paid) else '' end;
+  insert into public.order_events (order_id, status, note) values (o.id, 'thanh_toan', v_note);
+  if v_status <> o.status then
+    insert into public.order_events (order_id, status, note)
+    values (o.id, v_status, 'Tự động xác nhận sau khi nhận ' || case when v_next = 'da_coc' then 'tiền cọc' else 'đủ tiền' end);
+  end if;
+
+  v_title := case
+    when o.status = 'da_huy' then 'Đơn đã hủy ' || o.code || ' vừa nhận ' || public.fmt_vnd(p_amount) || ' — cần hoàn tiền'
+    when v_status <> o.status then 'Đơn ' || o.code || ' đã ' || case when v_next = 'da_coc' then 'đặt cọc' else 'thanh toán đủ' end || ', tự chuyển Đã xác nhận'
+    when v_next = 'da_thanh_toan' and o.payment_status <> 'da_thanh_toan' then 'Đơn ' || o.code || ' đã thanh toán đủ'
+    when v_next in ('chua_thanh_toan', 'that_bai') then 'Đơn ' || o.code || ' chuyển thiếu ' || public.fmt_vnd(v_need - v_paid)
+    else 'Đơn ' || o.code || ' nhận thêm ' || public.fmt_vnd(p_amount) end;
+  insert into public.shop_notices (kind, order_code, title, body)
+  values ('thanh_toan', o.code, v_title, o.full_name || ' · ' || o.phone || ' — ' || v_note);
+  return v_next;
+end $$;
+revoke execute on function public.apply_payment(uuid, bigint, text, text) from public, anon, authenticated;
+
+-- Chỉ máy chủ được gọi: tiền chuyển khoản vào tài khoản shop (SePay báo qua /api/sepay-webhook).
+-- Không đòi đúng số tiền: cộng dồn, đủ cọc / đủ tổng thì tự đổi trạng thái. Chuyển khoản không khớp đơn nào cũng báo shop.
+create or replace function public.record_bank_transfer(p_gateway text, p_ref text, p_code text, p_amount bigint, p_content text)
+returns text language plpgsql security definer set search_path = public as $$
+declare v_id bigint; v_order uuid;
+begin
+  if coalesce(p_ref, '') = '' or coalesce(p_amount, 0) <= 0 then return 'bad_request'; end if;
+  insert into public.payments (gateway, ref, order_code, amount, content)
+  values (p_gateway, p_ref, upper(nullif(p_code, '')), p_amount, left(coalesce(p_content, ''), 500))
+  on conflict (gateway, ref) do nothing
+  returning id into v_id;
+  if v_id is null then return 'already'; end if;  -- SePay gửi lại cùng giao dịch
+
+  select id into v_order from public.orders where code = upper(nullif(p_code, ''));
+  if v_order is null then
+    update public.payments set result = 'khong_khop' where id = v_id;
+    insert into public.shop_notices (kind, order_code, title, body)
+    values ('khong_khop', null, 'Nhận ' || public.fmt_vnd(p_amount) || ' không khớp đơn nào',
+            'Nội dung chuyển khoản: "' || left(coalesce(p_content, ''), 200) || '" (mã GD ' || p_ref || '). Kiểm tra rồi xác nhận tay trong Đơn hàng.');
+    return 'not_found';
+  end if;
+  update public.payments set result = 'ok' where id = v_id;
+  perform public.apply_payment(v_order, p_amount, p_gateway, p_ref);
+  return 'ok';
+end $$;
+revoke execute on function public.record_bank_transfer(text, text, text, bigint, text) from public, anon, authenticated;
+grant execute on function public.record_bank_transfer(text, text, text, bigint, text) to service_role;
 
 -- ---------------------------------------------------------------- PHÂN QUYỀN (RLS)
 alter table public.profiles enable row level security;

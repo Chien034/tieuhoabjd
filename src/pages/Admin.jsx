@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { api, DEMO } from '../lib/api.js'
 import { useShop } from '../lib/store.jsx'
@@ -20,8 +20,41 @@ import { EMPTY_REVIEW, MAX_REVIEW_IMAGES, normalizeReview, reviewError, reviewSu
 function useOrders() {
   const [list, setList] = useState(null)
   const load = () => api.admin.orders().then(setList).catch(() => setList([]))
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); return api.admin.subscribeNotices(load) }, []) // tiền về → đơn đổi trạng thái, tải lại
   return [list, load, setList]
+}
+
+// Thông báo cho shop: tiền chuyển khoản / VNPay / MoMo về, đơn tự chuyển "Đã xác nhận", chuyển khoản không khớp đơn
+function useNotices() {
+  const { toast } = useShop()
+  const [list, setList] = useState([])
+  const load = useCallback(() => api.admin.notices().then(setList).catch(() => {}), [])
+  useEffect(() => {
+    load()
+    const off = api.admin.subscribeNotices(fresh => { load(); if (fresh) toast('Có thanh toán mới — xem thông báo ở đầu trang Quản trị', 'info') })
+    const t = setInterval(load, 30000) // phòng khi realtime chưa bật
+    return () => { off(); clearInterval(t) }
+  }, [load, toast])
+  const seenAll = async () => { await api.admin.markNoticesSeen().catch(() => {}); load() }
+  return [list, seenAll]
+}
+
+function NoticeBar({ list, onSeen }) {
+  const unseen = list.filter(n => !n.seen)
+  if (!unseen.length) return null
+  return (
+    <div className="panel notice-bar">
+      <div className="row-between wrap gap"><b>Thanh toán mới ({unseen.length})</b><button className="btn ghost sm" onClick={onSeen}>Đã xem hết</button></div>
+      <ul>
+        {unseen.slice(0, 8).map(n => (
+          <li key={n.id} className={n.kind === 'khong_khop' ? 'bad-text' : ''}>
+            <b>{n.title}</b> <small className="muted">· {dateTime(n.created_at)}</small><br /><small>{n.body}</small>
+          </li>
+        ))}
+      </ul>
+      {unseen.length > 8 && <small className="muted">và {unseen.length - 8} thông báo khác…</small>}
+    </div>
+  )
 }
 
 function Dashboard() {
@@ -920,9 +953,16 @@ function ChatTab() {
 
 export default function Admin() {
   const { user, toast, reloadProducts } = useShop()
+  const isAdmin = user?.role === 'admin'
   if (user === undefined) return <div className="container pad-l"><Spinner /></div>
   if (!user) return <Navigate to="/dang-nhap?tiep=/quan-tri" replace />
-  if (user.role !== 'admin') return <Navigate to="/" replace />
+  if (!isAdmin) return <Navigate to="/" replace />
+  return <AdminShell toast={toast} reloadProducts={reloadProducts} />
+}
+
+function AdminShell({ toast, reloadProducts }) {
+  const [notices, seenAll] = useNotices()
+  const unseen = notices.filter(n => !n.seen).length
   return (
     <div className="container admin">
       <div className="row-between wrap gap">
@@ -931,7 +971,7 @@ export default function Admin() {
       </div>
       <nav className="admin-tabs">
         <NavLink end to="/quan-tri">Tổng quan</NavLink>
-        <NavLink to="/quan-tri/don-hang">Đơn hàng</NavLink>
+        <NavLink to="/quan-tri/don-hang">Đơn hàng{unseen > 0 && <span className="pill bad">{unseen}</span>}</NavLink>
         <NavLink to="/quan-tri/san-pham">Sản phẩm</NavLink>
         <NavLink to="/quan-tri/ma-giam-gia">Mã giảm giá</NavLink>
         <NavLink to="/quan-tri/danh-gia">Đánh giá</NavLink>
@@ -941,6 +981,7 @@ export default function Admin() {
         <NavLink to="/quan-tri/cai-dat">Cài đặt cửa hàng</NavLink>
         <NavLink to="/quan-tri/sao-luu">Sao lưu</NavLink>
       </nav>
+      <NoticeBar list={notices} onSeen={seenAll} />
       <Routes>
         <Route index element={<Dashboard />} />
         <Route path="don-hang" element={<Orders />} />
