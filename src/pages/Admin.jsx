@@ -10,6 +10,7 @@ import { decodeCsv, parseCsv, rowsToProducts, CSV_COLUMNS } from '../lib/csvImpo
 import { Badge, Field, Modal, Spinner } from '../components/ui.jsx'
 import ProductArt from '../components/ProductArt.jsx'
 import { OrderView } from './Order.jsx'
+import { INFO_FIELDS, BANK_FIELDS, normalizeInfo } from '../lib/shopInfo.js'
 
 function useOrders() {
   const [list, setList] = useState(null)
@@ -488,6 +489,107 @@ function Customers() {
   )
 }
 
+// Cài đặt cửa hàng: thông tin chung, tài khoản nhận tiền, phí giao hàng, showroom
+const MULTI = ['tagline', 'address']
+function ShopSettings() {
+  const { info, setInfo, toast } = useShop()
+  const [f, setF] = useState(info)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { setF(info) }, [info])
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const input = ([k, l, hint]) => (
+    <Field key={k} label={l} hint={hint}>
+      {MULTI.includes(k)
+        ? <textarea className="input" rows={3} value={f[k]} onChange={e => set(k, e.target.value)} />
+        : <input className="input" value={f[k]} onChange={e => set(k, e.target.value)} inputMode={k === 'bank_account' ? 'numeric' : undefined} />}
+    </Field>
+  )
+  const save = async e => {
+    e.preventDefault()
+    setBusy(true)
+    try { setInfo(normalizeInfo(await api.admin.saveShopInfo(f))); toast('Đã lưu cài đặt cửa hàng') }
+    catch (x) { toast(x.message, 'bad') } finally { setBusy(false) }
+  }
+  const preview = normalizeInfo(f, info)
+  const money = k => <input className="input" value={f[k] === '' ? '' : Number(f[k]).toLocaleString('vi-VN')} inputMode="numeric" onChange={e => set(k, e.target.value.replace(/\D/g, ''))} />
+  return (
+    <div>
+      <form onSubmit={save}>
+        <div className="order-cols">
+          <div className="panel">
+            <h3>Thông tin chung</h3>
+            <div className="form-grid">{INFO_FIELDS.map(input)}</div>
+          </div>
+          <div>
+            <div className="panel">
+              <h3>Tài khoản nhận chuyển khoản</h3>
+              <div className="form-grid">{BANK_FIELDS.map(input)}</div>
+              <p className="muted small">Mã QR trên trang đơn hàng tạo theo tài khoản này. Quét thử mã bên dưới bằng app ngân hàng để chắc tên chủ tài khoản đúng.</p>
+              {preview.bank_id && preview.bank_account && <img src={`https://img.vietqr.io/image/${preview.bank_id}-${preview.bank_account}-compact2.png?amount=10000&addInfo=THU&accountName=${encodeURIComponent(preview.bank_account_name)}`} alt="QR thử" width="180" height="180" />}
+            </div>
+            <div className="panel">
+              <h3>Phí giao hàng</h3>
+              <div className="form-grid">
+                <Field label="Phí giao hàng (₫)">{money('shipping_fee')}</Field>
+                <Field label="Miễn phí giao cho đơn từ (₫)">{money('free_ship_from')}</Field>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="row gap mb"><button className="btn" disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu cài đặt'}</button><button type="button" className="btn ghost" onClick={() => setF(info)}>Hoàn tác</button></div>
+      </form>
+      <StoreList />
+    </div>
+  )
+}
+
+const EMPTY_STORE = { name: '', city: '', district: '', address: '', phone: '', hours: '' }
+function StoreList() {
+  const { toast } = useShop()
+  const [list, setList] = useState(null)
+  const [edit, setEdit] = useState(null)
+  const load = () => api.stores().then(setList).catch(() => setList([]))
+  useEffect(() => { load() }, [])
+  const del = async s => {
+    if (!confirm(`Xóa ${s.name}?`)) return
+    try { await api.admin.deleteStore(s.id); toast('Đã xóa showroom'); load() } catch (x) { toast(x.message, 'bad') }
+  }
+  return (
+    <div className="panel">
+      <div className="row-between wrap gap"><h3>Showroom / địa điểm nhận hàng</h3><button className="btn sm" onClick={() => setEdit(EMPTY_STORE)}>+ Thêm showroom</button></div>
+      <p className="muted small">Hiện ở trang Showroom và mục "Nhận tại cửa hàng" khi đặt hàng. Chưa có showroom nào thì khách chỉ chọn được giao tận nơi.</p>
+      {!list ? <Spinner /> : !list.length ? <p className="muted">Chưa có showroom.</p> : (
+        <div className="table-wrap">
+          <table className="table compact">
+            <thead><tr><th>Tên</th><th>Địa chỉ</th><th>Điện thoại</th><th>Giờ mở cửa</th><th /></tr></thead>
+            <tbody>{list.map(s => <tr key={s.id}><td>{s.name}</td><td>{[s.address, s.district, s.city].filter(Boolean).join(', ')}</td><td>{s.phone}</td><td>{s.hours}</td><td className="r nowrap"><button className="link-btn" onClick={() => setEdit(s)}>Sửa</button> · <button className="link-btn" onClick={() => del(s)}>Xóa</button></td></tr>)}</tbody>
+          </table>
+        </div>
+      )}
+      {edit && <StoreForm value={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load() }} />}
+    </div>
+  )
+}
+
+function StoreForm({ value, onClose, onSaved }) {
+  const { toast } = useShop()
+  const [s, setS] = useState({ ...EMPTY_STORE, ...value })
+  const [busy, setBusy] = useState(false)
+  const F = [['name', 'Tên showroom *'], ['city', 'Tỉnh / thành *'], ['district', 'Quận / huyện'], ['address', 'Địa chỉ (số nhà, đường, phường) *'], ['phone', 'Điện thoại'], ['hours', 'Giờ mở cửa']]
+  const save = async e => {
+    e.preventDefault(); setBusy(true)
+    try { await api.admin.saveStore(s); toast('Đã lưu showroom'); onSaved() } catch (x) { toast(x.message, 'bad') } finally { setBusy(false) }
+  }
+  return (
+    <Modal title={s.id ? 'Sửa showroom' : 'Thêm showroom'} onClose={onClose}>
+      <form onSubmit={save}>
+        <div className="form-grid">{F.map(([k, l]) => <Field key={k} label={l}><input className="input" value={s[k]} onChange={e => setS({ ...s, [k]: e.target.value })} /></Field>)}</div>
+        <div className="row gap"><button className="btn" disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu'}</button><button type="button" className="btn ghost" onClick={onClose}>Hủy</button></div>
+      </form>
+    </Modal>
+  )
+}
+
 export default function Admin() {
   const { user, toast, reloadProducts } = useShop()
   if (user === undefined) return <div className="container pad-l"><Spinner /></div>
@@ -505,6 +607,7 @@ export default function Admin() {
         <NavLink to="/quan-tri/san-pham">Sản phẩm</NavLink>
         <NavLink to="/quan-tri/gia-nhap">Tính giá nhập</NavLink>
         <NavLink to="/quan-tri/khach-hang">Khách hàng</NavLink>
+        <NavLink to="/quan-tri/cai-dat">Cài đặt cửa hàng</NavLink>
         <NavLink to="/quan-tri/sao-luu">Sao lưu</NavLink>
       </nav>
       <Routes>
@@ -513,6 +616,7 @@ export default function Admin() {
         <Route path="san-pham" element={<Products />} />
         <Route path="gia-nhap" element={<ImportCalc />} />
         <Route path="khach-hang" element={<Customers />} />
+        <Route path="cai-dat" element={<ShopSettings />} />
         <Route path="sao-luu" element={<Backup />} />
       </Routes>
     </div>

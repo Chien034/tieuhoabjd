@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api.js'
+import { useShop } from '../lib/store.jsx'
+import { vnd } from '../lib/format.js'
 import { Breadcrumb, Empty, Icon, Spinner } from '../components/ui.jsx'
 import { SizeTable } from './Product.jsx'
 
@@ -70,7 +72,7 @@ const POLICIES = {
     'Đơn có hàng đặt trước không áp dụng thanh toán khi nhận hàng (COD).',
   ]],
   'giao-hang': ['Giao hàng & thanh toán', [
-    'Miễn phí giao hàng cho đơn từ 1.000.000 ₫; đơn nhỏ hơn phí 30.000 ₫. Hàng có sẵn giao 1 – 3 ngày.',
+    info => `Miễn phí giao hàng cho đơn từ ${vnd(info.free_ship_from)}; đơn nhỏ hơn phí ${vnd(info.shipping_fee)}. Hàng có sẵn giao 1 – 3 ngày.`,
     'Búp bê được bọc đệm khí nhiều lớp, đóng hộp cứng; đơn giá trị cao có bảo hiểm vận chuyển.',
     'Thanh toán: chuyển khoản VietQR, thẻ ATM / Visa / Master qua VNPay, ví MoMo; COD cho đơn toàn hàng có sẵn.',
     'Nhận tại showroom: chọn showroom khi đặt, shop báo khi hàng sẵn sàng.',
@@ -84,13 +86,14 @@ const POLICIES = {
 
 export function Policy() {
   const { slug } = useParams()
+  const { info } = useShop()
   const p = POLICIES[slug]
   if (!p) return <div className="container"><Empty text="Không tìm thấy trang"><Link to="/" className="btn">Về trang chủ</Link></Empty></div>
   return (
     <div className="container narrow">
       <Breadcrumb items={[{ label: p[0] }]} />
       <h1>{p[0]}</h1>
-      <div className="panel prose">{p[1].map((t, i) => <p key={i}>{t}</p>)}</div>
+      <div className="panel prose">{p[1].map((t, i) => <p key={i}>{typeof t === 'function' ? t(info) : t}</p>)}</div>
       <div className="chips">{Object.entries(POLICIES).filter(([k]) => k !== slug).map(([k, v]) => <Link key={k} className="chip" to={'/chinh-sach/' + k}>{v[0]}</Link>)}</div>
     </div>
   )
