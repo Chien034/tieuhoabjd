@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from './ui.jsx'
+import { withVariantImage, lineLabel } from '../lib/variants.js'
 import ProductArt from './ProductArt.jsx'
 import ChatWidget from './ChatWidget.jsx'
 import { useShop } from '../lib/store.jsx'
@@ -136,14 +137,14 @@ function MiniCart() {
             </div>
             <div className="mini-lines">
               {cart.map(l => (
-                <div key={l.product_id + l.size} className="mini-line">
-                  <ProductArt product={l.product} />
+                <div key={l.key} className="mini-line">
+                  <ProductArt product={withVariantImage(l.product, l.variantObj)} />
                   <div>
                     <Link to={`/san-pham/${l.product.slug}`} onClick={() => setMiniCart(false)}>{l.product.name}</Link>
-                    <small className="muted">{l.size && `Size ${l.size} · `}SL {l.qty}</small>
-                    <b>{vnd(l.product.price * l.qty)}</b>
+                    <small className="muted">{lineLabel(l) && `${lineLabel(l)} · `}SL {l.qty}</small>
+                    <b>{vnd(l.unit * l.qty)}</b>
                   </div>
-                  <button className="link-btn" onClick={() => removeLine(l.product_id, l.size)} aria-label="Xóa">✕</button>
+                  <button className="link-btn" onClick={() => removeLine(l.key)} aria-label="Xóa">✕</button>
                 </div>
               ))}
             </div>

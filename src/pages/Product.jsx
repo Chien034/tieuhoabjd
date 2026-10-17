@@ -8,6 +8,8 @@ import { vnd, date } from '../lib/format.js'
 import ProductArt from '../components/ProductArt.jsx'
 import { Breadcrumb, Icon, Modal, Price, Qty, Rail, Stars, Empty, Spinner } from '../components/ui.jsx'
 import { telHref } from '../lib/shopInfo.js'
+import { hasVariants, variantOf, unitStock } from '../lib/variants.js'
+import { VideoView, VideoThumb, productMedia } from '../components/ProductMedia.jsx'
 
 export const BJD_SIZES = [
   ['1/3 · SD', '58–65cm', '8–9 inch', '16–18mm', '~2,5–3,5kg', 'Nhiều chi tiết, chụp ảnh đẹp, quần áo đa dạng nhất; nặng, cần túi riêng'],
@@ -86,8 +88,11 @@ export default function Product() {
   const [tab, setTab] = useState('mo-ta')
   const [zoom, setZoom] = useState(null)
   const [callback, setCallback] = useState(false)
+  const [vid, setVid] = useState('')
+  const [varErr, setVarErr] = useState(false)
+  const media = useMemo(() => (p ? productMedia(p) : []), [p])
 
-  useEffect(() => { if (p) { rememberViewed(p.id); document.title = p.name } setImg(0); setSize(''); setQty(1); setSizeErr(false) }, [p])
+  useEffect(() => { if (p) { rememberViewed(p.id); document.title = p.name } setImg(0); setSize(''); setQty(1); setSizeErr(false); setVid(''); setVarErr(false) }, [p])
 
   if (!products) return <div className="container pad-l"><Spinner /></div>
   if (!p) return <div className="container"><Empty text="Sản phẩm không tồn tại hoặc đã ngừng bán"><Link className="btn" to="/">Về trang chủ</Link></Empty></div>
@@ -97,11 +102,21 @@ export default function Product() {
   const col = COLLECTIONS.find(c => c.slug === p.collection)
   const liked = wish.includes(p.id)
   const related = relatedProducts(products, p)
-  const out = p.stock <= 0
+  const v = variantOf(p, vid)
+  const shown = v ? { ...p, price: v.price, compare_price: v.compare_price } : p // giá theo biến thể đang chọn
+  const stock = v ? unitStock(p, vid) : p.stock
+  const out = stock <= 0
+  const cur = media[img] || media[0]
+  const pickVariant = x => {
+    setVid(x.id); setVarErr(false); setQty(1)
+    const i = x.image ? media.findIndex(m => m.src === x.image) : -1
+    if (i >= 0) setImg(i)
+  }
 
   const add = buyNow => {
+    if (hasVariants(p) && !v) { setVarErr(true); toast('Vui lòng chọn loại sản phẩm', 'bad'); return }
     if (p.sizes?.length && !size) { setSizeErr(true); toast('Vui lòng chọn size', 'bad'); return }
-    addToCart(p, size, qty, { silent: buyNow })
+    addToCart(p, size, qty, { silent: buyNow, variant: vid })
     if (buyNow) nav('/thanh-toan')
   }
 
@@ -118,14 +133,22 @@ export default function Product() {
       <div className="pdp">
         <div className="gallery">
           <div className="thumbs">
-            {(p.images?.length ? p.images.map((_, i) => i) : [0, 1, 2, 3]).map(v => <button key={v} className={v === img ? 'on' : ''} onClick={() => setImg(v)} aria-label={'Ảnh ' + (v + 1)}><ProductArt product={p} variant={v} /></button>)}
+            {media.map((m, i) => (
+              <button key={i} className={i === img ? 'on' : ''} onClick={() => setImg(i)} aria-label={(m.type === 'video' ? 'Video ' : 'Ảnh ') + (i + 1)}>
+                {m.type === 'video' ? <VideoThumb src={m.src} /> : <ProductArt product={m.type === 'img' ? { ...p, images: [m.src] } : p} variant={m.n || 0} />}
+              </button>
+            ))}
           </div>
-          <div className="main-img"
-            onMouseMove={e => { const r = e.currentTarget.getBoundingClientRect(); setZoom({ x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 }) }}
-            onMouseLeave={() => setZoom(null)}>
-            <div style={zoom ? { transform: 'scale(1.8)', transformOrigin: `${zoom.x}% ${zoom.y}%` } : undefined} className="zoomer"><ProductArt product={p} variant={img} /></div>
-            {p.compare_price > p.price && <span className="badge sale-tag">-{Math.round((1 - p.price / p.compare_price) * 100)}%</span>}
-          </div>
+          {cur?.type === 'video' ? (
+            <div className="main-img is-video"><VideoView key={cur.src} src={cur.src} /></div>
+          ) : (
+            <div className="main-img"
+              onMouseMove={e => { const r = e.currentTarget.getBoundingClientRect(); setZoom({ x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 }) }}
+              onMouseLeave={() => setZoom(null)}>
+              <div style={zoom ? { transform: 'scale(1.8)', transformOrigin: `${zoom.x}% ${zoom.y}%` } : undefined} className="zoomer"><ProductArt product={cur?.type === 'img' ? { ...p, images: [cur.src] } : p} variant={cur?.n || 0} /></div>
+              {shown.compare_price > shown.price && <span className="badge sale-tag">-{Math.round((1 - shown.price / shown.compare_price) * 100)}%</span>}
+            </div>
+          )}
         </div>
 
         <div className="pdp-info">
@@ -133,13 +156,30 @@ export default function Product() {
           <div className="row gap wrap muted small">
             <span>Mã: <b>{p.sku}</b></span><span><Stars value={p.rating} /> {p.rating}</span><span>{p.review_count} đánh giá</span><span>Đã bán {p.sold}</span>
           </div>
-          <Price p={p} big />
-          {p.stock_type === 'order' && p.kind === 'doll' ? <div className="install">Đặt cọc 50%: <b>{vnd(Math.ceil(p.price / 2 / 1000) * 1000)}</b></div> : <div className="install">&nbsp;</div>}
+          <Price p={shown} big from={v ? false : undefined} />
+          {p.stock_type === 'order' && p.kind === 'doll' ? <div className="install">Đặt cọc 50%{v ? '' : ' (từ)'}: <b>{vnd(Math.ceil(shown.price / 2 / 1000) * 1000)}</b></div> : <div className="install">&nbsp;</div>}
 
           {p.stock_type === 'order' ? (
             <div className="notice warn small">Hàng <b>đặt trước</b>: xưởng làm theo đơn, về Việt Nam khoảng <b>{p.lead_days}–{p.lead_days + 20} ngày</b>. {p.kind === 'doll' ? 'Đặt cọc 50% khi chốt đơn, thanh toán phần còn lại khi hàng về.' : ''}</div>
           ) : <div className="notice small">Hàng <b>có sẵn</b> tại Việt Nam, giao 1–3 ngày.</div>}
           <button className="link-btn small" onClick={() => setGuide(true)}>Bảng size BJD (chiều cao, size tóc, size mắt)</button>
+          {hasVariants(p) && (
+            <div className={'sizes variants' + (varErr ? ' err' : '')}>
+              <b>Chọn loại</b>
+              <div className="size-list variant-list" role="radiogroup" aria-label="Loại sản phẩm">
+                {p.variants.map(x => {
+                  const none = p.stock_type !== 'order' && x.stock <= 0
+                  return (
+                    <button key={x.id} role="radio" aria-checked={vid === x.id} className={vid === x.id ? 'on' : ''} disabled={none} onClick={() => pickVariant(x)}>
+                      {x.image && <img src={x.image} alt="" />}
+                      <span>{x.name}<small>{vnd(x.price)}{none ? ' · Hết hàng' : ''}</small></span>
+                    </button>
+                  )
+                })}
+              </div>
+              {varErr && <small className="field-err">Bạn chưa chọn loại</small>}
+            </div>
+          )}
           {p.sizes?.length > 0 && (
             <div className={'sizes' + (sizeErr ? ' err' : '')}>
               <div className="row-between"><b>Chọn size</b><button className="link-btn" onClick={() => setGuide(true)}>Hướng dẫn đo size</button></div>
@@ -151,8 +191,8 @@ export default function Product() {
           )}
 
           <div className="row gap buy-row">
-            <Qty value={qty} onChange={setQty} max={Math.max(1, Math.min(10, p.stock))} />
-            <span className={out ? 'bad-text' : p.stock < 5 ? 'warn-text' : 'ok-text'}>{out ? 'Tạm hết hàng' : p.stock_type === 'order' ? 'Nhận đặt trước' : p.stock < 5 ? `Chỉ còn ${p.stock} sản phẩm` : 'Còn hàng'}</span>
+            <Qty value={qty} onChange={setQty} max={Math.max(1, Math.min(10, stock))} />
+            <span className={out ? 'bad-text' : stock < 5 ? 'warn-text' : 'ok-text'}>{out ? 'Tạm hết hàng' : p.stock_type === 'order' ? 'Nhận đặt trước' : stock < 5 ? `Chỉ còn ${stock} sản phẩm` : 'Còn hàng'}</span>
           </div>
 
           <div className="buy-btns">

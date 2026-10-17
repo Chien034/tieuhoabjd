@@ -81,7 +81,7 @@ export function OrderView({ order, onChange }) {
           <h4>Sản phẩm</h4>
           {order.items.map((it, i) => (
             <div key={i} className="row-between item-row">
-              <span>{it.name}{it.size && <small className="muted"> · Size {it.size}</small>} <small className="muted">× {it.qty}</small></span>
+              <span>{it.name}{it.variant && <small className="muted"> · {it.variant}</small>}{it.size && <small className="muted"> · Size {it.size}</small>} <small className="muted">× {it.qty}</small></span>
               <b>{vnd(it.line_total)}</b>
             </div>
           ))}
