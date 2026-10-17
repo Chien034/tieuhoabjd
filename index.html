@@ -5,6 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Búp bê khớp cầu BJD 1/3, 1/4, 1/6 và phụ kiện: tóc giả, mắt, trang phục, giày — hàng có sẵn và order." />
+    <meta name="theme-color" content="#4a2c5e" />
+    <script>
+      // Chọn Nhật (sáng) / Nguyệt (tối) trước khi vẽ trang để không nháy màu. Khoá phải khớp src/lib/theme.js.
+      (function () {
+        var t = null
+        try { t = localStorage.getItem('tieuhoa-theme') } catch (e) {}
+        if (t !== 'light' && t !== 'dark') t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        document.documentElement.setAttribute('data-theme', t)
+        if (t === 'dark') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#13111b')
+      })()
+    </script>
     <title>Tiểu Hoa BJD — Búp bê khớp cầu & phụ kiện</title>
   </head>
   <body>
