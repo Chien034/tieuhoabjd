@@ -9,6 +9,7 @@ import { filterProducts } from '../lib/catalog.js'
 import { vnd } from '../lib/format.js'
 import { DEMO } from '../lib/api.js'
 import { telHref, zaloHref } from '../lib/shopInfo.js'
+import { useTheme } from '../lib/theme.js'
 
 function Logo() {
   const { info } = useShop()
@@ -214,6 +215,17 @@ function Newsletter() {
   )
 }
 
+function ThemeToggle() {
+  const { theme, toggle } = useTheme()
+  const dark = theme === 'dark'
+  const label = dark ? 'Chuyển sang chế độ Nhật (sáng)' : 'Chuyển sang chế độ Nguyệt (tối)'
+  return (
+    <button className="h-act theme-btn" onClick={toggle} aria-label={label} title={label}>
+      <Icon name={dark ? 'sun' : 'moon'} /><span className="only-d">{dark ? 'Nhật' : 'Nguyệt'}</span>
+    </button>
+  )
+}
+
 export default function Layout() {
   const { user, cartCount, wish, miniCart, setMiniCart, info } = useShop()
   const [menu, setMenu] = useState(false)
@@ -235,6 +247,7 @@ export default function Layout() {
           <div className="only-d grow"><SearchBox /></div>
           <div className="header-actions">
             {user?.role === 'admin' && <Link to="/quan-tri" className="admin-link only-d">Quản trị</Link>}
+            <ThemeToggle />
             <Link to={user ? '/tai-khoan' : '/dang-nhap'} className="h-act" aria-label="Tài khoản">
               <Icon name="user" /><span className="only-d">{user ? (user.full_name || 'Tài khoản').split(' ').slice(-1)[0] : 'Đăng nhập'}</span>
             </Link>
