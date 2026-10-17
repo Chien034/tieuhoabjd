@@ -518,6 +518,7 @@ function ShopSettings() {
         <div className="order-cols">
           <div className="panel">
             <h3>Thông tin chung</h3>
+            <LogoPicker value={f.logo} onChange={v => set('logo', v)} />
             <div className="form-grid">{INFO_FIELDS.map(input)}</div>
           </div>
           <div>
@@ -539,6 +540,26 @@ function ShopSettings() {
         <div className="row gap mb"><button className="btn" disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu cài đặt'}</button><button type="button" className="btn ghost" onClick={() => setF(info)}>Hoàn tác</button></div>
       </form>
       <StoreList />
+    </div>
+  )
+}
+
+// Logo: tải ảnh lên (PNG giữ nền trong suốt), bỏ trống thì dùng logo vẽ sẵn
+function LogoPicker({ value, onChange }) {
+  const { toast } = useShop()
+  const [busy, setBusy] = useState(false)
+  const pick = async e => {
+    const file = e.target.files?.[0]; e.target.value = ''
+    if (!file) return
+    setBusy(true)
+    try { onChange(await api.admin.uploadLogo(file)); toast('Đã tải logo, bấm Lưu cài đặt để áp dụng') } catch (x) { toast(x.message, 'bad') } finally { setBusy(false) }
+  }
+  return (
+    <div className="row gap wrap mb">
+      <div className="logo-preview">{value ? <img src={value} alt="Logo cửa hàng" /> : <span className="muted small">Logo mặc định</span>}</div>
+      <label className="btn ghost sm">{busy ? 'Đang tải…' : value ? 'Đổi logo' : 'Chọn logo'}<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={pick} disabled={busy} /></label>
+      {value && <button type="button" className="btn ghost sm" onClick={() => onChange('')}>Dùng logo mặc định</button>}
+      <span className="muted small grow">Nên dùng ảnh PNG nền trong suốt, ngang hoặc vuông.</span>
     </div>
   )
 }

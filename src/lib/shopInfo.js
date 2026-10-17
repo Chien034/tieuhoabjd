@@ -8,6 +8,8 @@ const env = import.meta.env || {}
 // Bỏ BOM, ký tự ẩn (zero-width) và khoảng trắng thừa — hay dính vào khi dán từ Windows / Excel
 export const cleanText = v => String(v ?? '').replace(/[﻿​-‍⁠­]/g, '').replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '').replace(/\s+/g, ' ').trim()
 const cleanMulti = v => String(v ?? '').replace(/[﻿​-‍⁠­]/g, '').replace(/\r\n?/g, '\n').split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).join('\n').trim()
+// Chỉ nhận ảnh https:// hoặc ảnh nhúng (bản demo), tránh link lạ như javascript:
+const safeImage = v => { const u = cleanText(v); return /^(https:\/\/|data:image\/(png|jpeg|webp);)/.test(u) ? u : '' }
 const digits = v => cleanText(v).replace(/\D/g, '')
 const money = (v, d) => { const n = Number(String(v ?? '').replace(/\D/g, '')); return String(v ?? '').trim() === '' || !Number.isFinite(n) ? d : n }
 
@@ -19,6 +21,7 @@ export const INFO_FIELDS = [
   ['hours', 'Giờ hỗ trợ', 'VD: 8:00 – 21:30'],
   ['email', 'Email liên hệ', ''],
   ['zalo', 'Zalo', 'Số điện thoại Zalo hoặc link zalo.me'],
+  ['zalo_name', 'Tên hiển thị Zalo', 'VD: Minh Nguyệt'],
   ['facebook', 'Facebook', 'Link trang Facebook'],
   ['address', 'Địa chỉ liên hệ', 'Hiện ở chân trang (showroom quản lý riêng bên dưới)'],
 ]
@@ -33,7 +36,7 @@ export const DEFAULT_INFO = normalizeInfo({
   tagline: 'Búp bê khớp cầu BJD và phụ kiện nhập trực tiếp từ xưởng. Có sẵn tại Việt Nam hoặc order theo yêu cầu.',
   hotline: env.VITE_HOTLINE || '1800 0000',
   hours: '8:00 – 21:30',
-  email: '', zalo: '', facebook: '', address: '',
+  logo: '', email: '', zalo: '', zalo_name: '', facebook: '', address: '',
   bank_id: env.VITE_BANK_ID || 'VCB',
   bank_account: env.VITE_BANK_ACCOUNT || '0123456789',
   bank_account_name: env.VITE_BANK_ACCOUNT_NAME || 'TIEU HOA BJD',
@@ -48,10 +51,12 @@ export function normalizeInfo(raw = {}, fallback = DEFAULT_INFO) {
   return {
     name: pick('name'),
     tagline: pick('tagline', cleanMulti),
+    logo: safeImage(raw.logo ?? fb.logo),
     hotline: pick('hotline'),
     hours: pick('hours'),
     email: cleanText(raw.email ?? fb.email ?? ''),
     zalo: cleanText(raw.zalo ?? fb.zalo ?? ''),
+    zalo_name: cleanText(raw.zalo_name ?? fb.zalo_name ?? ''),
     facebook: cleanText(raw.facebook ?? fb.facebook ?? ''),
     address: cleanMulti(raw.address ?? fb.address ?? ''),
     bank_id: pick('bank_id', v => cleanText(v).toUpperCase().replace(/\s/g, '')),

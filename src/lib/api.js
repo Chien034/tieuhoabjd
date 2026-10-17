@@ -233,6 +233,7 @@ const demo = {
     async customers() { return (await demoUsers()).map(publicUser) },
     // Demo: ảnh lưu thẳng trong trình duyệt (nhỏ hơn để vừa bộ nhớ ~5 MB)
     async uploadImage(file) { return blobToDataUrl(await resizeImage(file, 700, 0.8)) },
+    async uploadLogo(file) { return blobToDataUrl(await resizeImage(file, 300, 0.9, { png: true })) },
     async backup() {
       return { exported_at: new Date().toISOString(), mode: 'demo', products: demoProducts(), orders: ls.get('hk_orders', []), customers: (await demoUsers()).map(publicUser), import_settings: { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) }, shop_info: await demo.shopInfo(), stores: demoStores() }
     },
@@ -405,6 +406,12 @@ const sb = {
       const d = new Date()
       const path = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${uid()}.jpg`
       must(await supabase.storage.from('san-pham').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' }))
+      return supabase.storage.from('san-pham').getPublicUrl(path).data.publicUrl
+    },
+    async uploadLogo(file) {
+      const blob = await resizeImage(file, 400, 0.9, { png: true })
+      const path = `logo/${uid()}.png`
+      must(await supabase.storage.from('san-pham').upload(path, blob, { contentType: 'image/png', cacheControl: '31536000' }))
       return supabase.storage.from('san-pham').getPublicUrl(path).data.publicUrl
     },
     async backup() {
