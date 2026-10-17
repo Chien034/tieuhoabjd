@@ -441,6 +441,10 @@ input, select, textarea { font: inherit; color: inherit; }
 .seg { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .seg label { flex: 1; min-width: 160px; border: 1.5px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; gap: 8px; align-items: center; cursor: pointer; font-weight: 600; }
 .seg label.on { border-color: var(--navy); background: var(--sel); }
+.deposit-pick { margin-top: 6px; }
+.deposit-pick > b { display: block; margin-bottom: 8px; }
+.deposit-pick .seg { margin-bottom: 8px; }
+.deposit-pick .seg label { min-width: 92px; padding: 10px 12px; }
 .addr-pick { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .addr-opt { display: flex; gap: 10px; align-items: flex-start; border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; }
 .addr-opt.on { border-color: var(--navy); background: var(--sel); }
@@ -791,3 +795,7 @@ input, select, textarea { font: inherit; color: inherit; }
   .inbox { grid-template-columns: 1fr; }
   .inbox-list { max-height: 40vh; }
 }
+
+/* Quản trị: thông báo thanh toán mới */
+.notice-bar { border-left: 4px solid var(--navy); }
+.notice-bar ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

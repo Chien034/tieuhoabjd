@@ -84,3 +84,16 @@ Script đặt địa chỉ **sandbox** (thử nghiệm). Khi ký hợp đồng t
 - `MOMO_ENDPOINT` = `https://payment.momo.vn/v2/gateway/api/create`, cùng 3 khóa MoMo thật.
 
 Rồi **Deployments → Redeploy**.
+
+## Tự xác nhận chuyển khoản (SePay)
+
+Khách quét QR chuyển khoản → tiền về tài khoản shop → SePay báo cho web → đơn tự sang **Đã xác nhận** và hiện thông báo ở đầu trang Quản trị.
+
+1. Supabase → SQL Editor: dán `supabase/coc-tu-xac-nhan.sql` → **Run** (chạy lại nhiều lần vẫn an toàn).
+2. Đăng ký tại <https://my.sepay.vn>, liên kết **đúng tài khoản ngân hàng** đang ghi ở Quản trị > Cài đặt cửa hàng.
+3. Tự nghĩ một khóa bí mật dài (vd 32 ký tự ngẫu nhiên). **Không dán khóa vào chat.**
+4. SePay → **Tích hợp WebHooks → Thêm webhook**: Sự kiện = *Có tiền vào*; URL = `<địa chỉ web>/api/sepay-webhook`; Kiểu chứng thực = **API Key**, dán khóa ở bước 3.
+5. Vercel → Settings → Environment Variables: thêm `SEPAY_API_KEY` = khóa ở bước 3 (kiểm tra đã có `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) → **Deployments → Redeploy**.
+6. Thử: đặt một đơn hàng đặt trước, chuyển khoản số nhỏ với nội dung là mã đơn (vd `HK26101712345`). Đơn ghi "chuyển thiếu" và Quản trị báo ngay; chuyển đủ cọc thì đơn tự sang Đã xác nhận.
+
+Chuyển khoản không có mã đơn trong nội dung vẫn được ghi lại và báo "không khớp đơn nào" để shop xác nhận tay.

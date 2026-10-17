@@ -40,7 +40,8 @@ Giá nhập chỉ quản trị xem được (bảng `product_costs` có RLS ch�
 | **Danh mục** | Búp bê 1/3, 1/4, 1/6, mini 1/8; Phụ kiện: tóc giả, mắt, trang phục, giày, giá đỡ / túi / dụng cụ. Phong cách: Cổ trang, Lolita, Học đường, Gothic. |
 | **Lọc / tìm** | Tỉ lệ, có sẵn / đặt trước, full set / nude, giới tính, màu da, mức giá; tìm không dấu ("toc gia 1/6"). |
 | **Chi tiết** | Ảnh nhiều góc, bảng size BJD (chiều cao, chu vi đầu, size mắt), thời gian về hàng, tiền cọc, đánh giá. |
-| **Đặt trước** | Đơn có hàng order: **cọc 50%** (không cho COD), trả phần còn lại khi hàng về; VNPay/MoMo/VietQR tự thu đúng số tiền cọc / còn lại; không ghi trùng giao dịch. |
+| **Đặt trước** | Đơn có hàng order: khách chọn **trả trước 50% / 70% / trả hết** hoặc tự nhập số tiền (tối thiểu 50%, không quá tổng đơn; không cho COD), trả phần còn lại khi hàng về; VNPay/MoMo/VietQR tự thu đúng số tiền cọc / còn lại; không ghi trùng giao dịch. |
+| **Tự xác nhận thanh toán** | Chuyển khoản VietQR: SePay báo tiền về qua `/api/sepay-webhook`, hệ thống tìm mã đơn trong nội dung, cộng số đã trả; đủ cọc / đủ tiền thì đơn tự sang **Đã xác nhận**, báo shop ở đầu trang Quản trị (realtime), trang đơn của khách tự cập nhật. Chuyển thiếu / không khớp đơn cũng báo shop. VNPay/MoMo cũng tự xác nhận. Cần chạy `supabase/coc-tu-xac-nhan.sql` một lần và đặt `SEPAY_API_KEY` trên Vercel. |
 | **Tài khoản** | Đăng ký, đăng nhập, quên mật khẩu, đơn hàng, sổ địa chỉ, yêu thích. Tra cứu đơn bằng mã + SĐT. |
 | **Quản trị** | Doanh thu, đơn hàng (xác nhận cọc / đủ tiền, đổi trạng thái, CSV), sản phẩm (kèm giá nhập, giá vốn, % lãi), **Tính giá nhập**, khách hàng. |
 | **Mã giảm giá** | **Quản trị > Mã giảm giá**: tạo mã giảm theo %, số tiền hoặc miễn phí ship; đơn tối thiểu, giảm tối đa, tổng số lượt, số lượt mỗi khách (theo SĐT / tài khoản), ngày bắt đầu / hết hạn; tắt / bật, xem số đơn và tổng tiền đã giảm. Khách nhập mã ở bước thanh toán; máy chủ tự kiểm tra và trừ lượt khi đặt, đơn hủy thì trả lượt. Cần chạy `supabase/ma-giam-gia.sql` một lần. |
@@ -81,7 +82,7 @@ E:\Tiểu hoa kế toán\
 └── cau-hinh-trien-khai.txt
 ```
 
-Làm tay (nếu không dùng script): Supabase SQL Editor chạy `supabase/schema.sql`, `supabase/seed.sql`, rồi `supabase/cai-dat-cua-hang.sql`, `supabase/tro-ly-chat.sql` và `supabase/ma-giam-gia.sql`; Vercel import repo với **Root Directory = `shop`**, biến môi trường theo `.env.example`; đăng ký tài khoản rồi `select public.make_admin('email');`. VNPay: IPN URL = `https://<web>/api/vnpay-ipn`.
+Làm tay (nếu không dùng script): Supabase SQL Editor chạy `supabase/schema.sql`, `supabase/seed.sql`, rồi `supabase/cai-dat-cua-hang.sql`, `supabase/tro-ly-chat.sql`, `supabase/ma-giam-gia.sql` và `supabase/coc-tu-xac-nhan.sql`; Vercel import repo với **Root Directory = `shop`**, biến môi trường theo `.env.example`; đăng ký tài khoản rồi `select public.make_admin('email');`. VNPay: IPN URL = `https://<web>/api/vnpay-ipn`. SePay: Webhook URL = `https://<web>/api/sepay-webhook`.
 
 ## 5. Đưa hàng Taobao thật lên web
 

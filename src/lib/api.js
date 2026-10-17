@@ -2,7 +2,7 @@
 // không thì chạy CHẾ ĐỘ DEMO: mọi thứ lưu trong localStorage của trình duyệt, thanh toán giả lập.
 import { createClient } from '@supabase/supabase-js'
 import { PRODUCTS, STORES, COUPONS } from './data.js'
-import { computeTotals, amountDue } from './pricing.js'
+import { computeTotals, amountDue, applyPayment } from './pricing.js'
 import { DEFAULT_IMPORT } from './importCost.js'
 import { resizeImage, blobToDataUrl } from './images.js'
 import { normalizeInfo, normalizeStore, storeError } from './shopInfo.js'
@@ -139,8 +139,9 @@ const demo = {
     const subtotal = items.reduce((s, i) => s + i.line_total, 0)
     const preorder = items.some(i => i.preorder)
     if (preorder && input.payment_method === 'cod') throw new Error('Đơn có hàng đặt trước cần đặt cọc — vui lòng chọn chuyển khoản, VNPay hoặc MoMo')
-    const t = computeTotals({ subtotal, delivery: input.delivery, coupon, preorder, fees: await demo.shopInfo() })
+    const t = computeTotals({ subtotal, delivery: input.delivery, coupon, preorder, fees: await demo.shopInfo(), depositChoice: input.deposit != null ? { amount: input.deposit } : null })
     if (t.couponError) throw new Error(t.couponError)
+    if (t.depositError) throw new Error(t.depositError)
     if (coupon?.per_customer_limit && customerUses(ls.get('hk_orders', []), coupon.code, { phone: input.phone, user_id: me?.id }) >= coupon.per_customer_limit) {
       throw new Error(`Bạn đã dùng hết lượt của mã ${coupon.code} (mỗi khách ${coupon.per_customer_limit} lần)`)
     }
@@ -152,7 +153,7 @@ const demo = {
       email: normEmail(input.email), full_name: input.full_name, phone: input.phone,
       delivery: input.delivery, address: input.address || '', store_id: input.store_id || null,
       note: input.note || '', gift_wrap: !!input.gift_wrap, invoice: input.invoice || null,
-      subtotal, discount: t.discount, shipping_fee: t.shipping, total: t.total, deposit: t.deposit,
+      subtotal, discount: t.discount, shipping_fee: t.shipping, total: t.total, deposit: t.deposit, paid_amount: 0,
       coupon_code: coupon?.code || null, payment_method: input.payment_method,
       payment_status: 'chua_thanh_toan', status: 'cho_xac_nhan', created_at: now, updated_at: now,
       items, events: [{ status: 'cho_xac_nhan', note: 'Đặt hàng thành công', created_at: now }],
@@ -188,6 +189,9 @@ const demo = {
       }
     }
     if (patch.payment_status && patch.payment_status !== o.payment_status) {
+      // Quản trị bấm "Đã nhận cọc / Đã nhận đủ tiền": số đã trả cập nhật theo (giống trigger order_changed)
+      if (patch.payment_status === 'da_coc') patch.paid_amount = Math.max(o.paid_amount || 0, o.deposit)
+      if (patch.payment_status === 'da_thanh_toan') patch.paid_amount = Math.max(o.paid_amount || 0, o.total)
       ev.push({ status: 'thanh_toan', note: note || ({ da_coc: 'Đã nhận tiền cọc', da_thanh_toan: 'Đã nhận đủ tiền', hoan_tien: 'Đã hoàn tiền' }[patch.payment_status] || 'Cập nhật thanh toán'), created_at: now })
       if (patch.payment_status === 'da_thanh_toan') patch.paid_at = now
     }
@@ -234,15 +238,41 @@ const demo = {
   async demoPaymentResult(code, ok) {
     const o = ls.get('hk_orders', []).find(x => x.code === code)
     if (!o) throw new Error('Không tìm thấy đơn')
-    const due = amountDue(o)
-    const next = !ok ? (o.payment_status === 'da_coc' ? 'da_coc' : 'that_bai') : o.payment_status !== 'da_coc' && o.deposit > 0 ? 'da_coc' : 'da_thanh_toan'
-    return demo._setStatus(o.id, { payment_status: next, payment_ref: ok ? 'DEMO' + Date.now() : o.payment_ref },
-      ok ? `Thanh toán ${o.payment_method.toUpperCase()} ${due.toLocaleString('vi-VN')}đ thành công (giả lập)` : 'Thanh toán thất bại (giả lập)')
+    if (ok) return demo._pay(o, amountDue(o), o.payment_method === 'momo' ? 'MoMo' : 'VNPay', 'DEMO' + Date.now())
+    return demo._setStatus(o.id, { payment_status: o.payment_status === 'da_coc' ? 'da_coc' : 'that_bai' }, 'Thanh toán thất bại (giả lập)')
+  },
+  // Giả lập SePay báo tiền chuyển khoản về tài khoản shop
+  async demoBankTransfer(code, amount) {
+    const o = ls.get('hk_orders', []).find(x => x.code === code)
+    if (!o) throw new Error('Không tìm thấy đơn')
+    return demo._pay(o, amount, 'chuyển khoản', 'DEMO' + Date.now())
+  },
+  // Cộng tiền vào đơn, tự xác nhận khi đủ cọc / đủ tiền, báo shop (giống hàm apply_payment trong CSDL)
+  async _pay(o, amount, gateway, ref) {
+    const r = applyPayment(o, amount)
+    const now = new Date().toISOString(), money = n => n.toLocaleString('vi-VN') + ' ₫'
+    const note = `Nhận ${money(amount)} qua ${gateway} (mã GD ${ref}). Đã trả ${money(r.paid_amount)} / ${money(o.total)}`
+    const events = [{ status: 'thanh_toan', note, created_at: now }]
+    if (r.confirmed) events.push({ status: 'da_xac_nhan', note: 'Tự động xác nhận sau khi nhận ' + (r.payment_status === 'da_coc' ? 'tiền cọc' : 'đủ tiền'), created_at: now })
+    const n = { ...o, paid_amount: r.paid_amount, payment_status: r.payment_status, status: r.status, payment_ref: ref, updated_at: now, events: [...o.events, ...events],
+      ...(r.payment_status === 'da_thanh_toan' && o.payment_status !== 'da_thanh_toan' ? { paid_at: now } : {}) }
+    ls.set('hk_orders', ls.get('hk_orders', []).map(x => (x.id === o.id ? n : x)))
+    const title = r.confirmed ? `Đơn ${o.code} đã ${r.payment_status === 'da_coc' ? 'đặt cọc' : 'thanh toán đủ'}, tự chuyển Đã xác nhận` : `Đơn ${o.code} nhận thêm ${money(amount)}`
+    ls.set('hk_notices', [{ id: uid(), kind: 'thanh_toan', order_code: o.code, title, body: `${o.full_name} · ${o.phone} — ${note}`, seen: false, created_at: now }, ...ls.get('hk_notices', [])].slice(0, 200))
+    window.dispatchEvent(new Event('hk-notices'))
+    return n
   },
   async verifyReturn() { return null },
 
   admin: {
     async orders() { return ls.get('hk_orders', []) },
+    async notices() { return ls.get('hk_notices', []).slice(0, 50) },
+    async markNoticesSeen() { ls.set('hk_notices', ls.get('hk_notices', []).map(x => ({ ...x, seen: true }))); window.dispatchEvent(new Event('hk-notices')) },
+    subscribeNotices(cb) {
+      const f = e => { if (!e.key || e.key === 'hk_notices') cb() }
+      window.addEventListener('storage', f); window.addEventListener('hk-notices', f)
+      return () => { window.removeEventListener('storage', f); window.removeEventListener('hk-notices', f) }
+    },
     async updateOrder(id, patch, note) { return demo._setStatus(id, patch, note) },
     async importSettings() { return { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) } },
     async saveImportSettings(s) { ls.set('hk_import', s) },
@@ -294,7 +324,7 @@ const demo = {
     async backup() {
       return { exported_at: new Date().toISOString(), mode: 'demo', products: demoProducts(), orders: ls.get('hk_orders', []), customers: (await demoUsers()).map(publicUser), import_settings: { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) }, shop_info: await demo.shopInfo(), stores: demoStores(), coupons: demoCoupons() }
     },
-    async resetDemo() { ['hk_products', 'hk_orders', 'hk_reviews', 'hk_import', 'hk_shop_info', 'hk_stores', 'hk_coupons'].forEach(k => localStorage.removeItem(k)) },
+    async resetDemo() { ['hk_products', 'hk_orders', 'hk_reviews', 'hk_import', 'hk_shop_info', 'hk_stores', 'hk_coupons', 'hk_notices'].forEach(k => localStorage.removeItem(k)) },
   },
 }
 
@@ -436,6 +466,18 @@ const sb = {
         out.push(...page.map(sortEvents))
         if (page.length < 1000) return out
       }
+    },
+    // Thông báo tiền về / đơn tự xác nhận (bảng shop_notices, tạo bằng supabase/coc-tu-xac-nhan.sql)
+    async notices() {
+      const r = await supabase.from('shop_notices').select('*').order('created_at', { ascending: false }).limit(50)
+      return r.error ? [] : r.data
+    },
+    async markNoticesSeen() { await supabase.from('shop_notices').update({ seen: true }).eq('seen', false) },
+    subscribeNotices(cb) {
+      const ch = supabase.channel('notices-' + Math.random().toString(36).slice(2))
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'shop_notices' }, () => cb(true))
+        .subscribe()
+      return () => { supabase.removeChannel(ch) }
     },
     async updateOrder(id, patch, note) {
       must(await supabase.rpc('admin_update_order', { p_id: id, p_status: patch.status || null, p_payment_status: patch.payment_status || null, p_note: note || '' }))

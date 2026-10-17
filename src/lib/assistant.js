@@ -146,7 +146,7 @@ export function answer(raw, ctx = {}) {
       mood: 'vui', links: [{ label: 'Xem giỏ hàng', to: '/gio-hang' }, { label: 'Tra cứu đơn', to: '/tra-cuu-don-hang' }],
     }),
     dat_truoc: () => ({
-      text: 'Hàng **đặt trước (order)** do xưởng đúc theo đơn, về Việt Nam khoảng **25–60 ngày** (thời gian riêng ghi trên từng sản phẩm).\n• Cọc **50%** khi chốt đơn, phần còn lại trả khi hàng về; shop gửi ảnh thật trước khi giao.\n• Xưởng không giao được hoặc trễ quá 30 ngày so với hẹn: hoàn 100% cọc.\n• Đơn có hàng order không dùng COD.',
+      text: 'Hàng **đặt trước (order)** do xưởng đúc theo đơn, về Việt Nam khoảng **25–60 ngày** (thời gian riêng ghi trên từng sản phẩm).\n• Trả trước **từ 50%** khi chốt đơn (chọn 50%, 70%, trả hết hoặc tự nhập số tiền), phần còn lại trả khi hàng về; chuyển khoản xong đơn tự xác nhận; shop gửi ảnh thật trước khi giao.\n• Xưởng không giao được hoặc trễ quá 30 ngày so với hẹn: hoàn 100% cọc.\n• Đơn có hàng order không dùng COD.',
       mood: 'vui', links: [{ label: 'Chính sách đặt trước', to: '/chinh-sach/dat-truoc' }],
     }),
     giao_hang: () => ({

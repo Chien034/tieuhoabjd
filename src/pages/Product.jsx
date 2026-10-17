@@ -213,10 +213,10 @@ export default function Product() {
             <span>Mã: <b>{p.sku}</b></span>{p.review_count > 0 ? <button className="link-btn small" onClick={() => setTab('danh-gia')}><Stars value={p.rating} /> {Number(p.rating).toFixed(1)} · {p.review_count} đánh giá</button> : <span>Chưa có đánh giá</span>}<span>Đã bán {fmtSold(p.sold || 0)}</span>
           </div>
           <Price p={shown} big from={v ? false : undefined} />
-          {p.stock_type === 'order' && p.kind === 'doll' ? <div className="install">Đặt cọc 50%{v ? '' : ' (từ)'}: <b>{vnd(Math.ceil(shown.price / 2 / 1000) * 1000)}</b></div> : <div className="install">&nbsp;</div>}
+          {p.stock_type === 'order' && p.kind === 'doll' ? <div className="install">Cọc tối thiểu 50%{v ? '' : ' (từ)'}: <b>{vnd(Math.ceil(shown.price / 2 / 1000) * 1000)}</b></div> : <div className="install">&nbsp;</div>}
 
           {p.stock_type === 'order' ? (
-            <div className="notice warn small">Hàng <b>đặt trước</b>: xưởng làm theo đơn, về Việt Nam khoảng <b>{p.lead_days}–{p.lead_days + 20} ngày</b>. {p.kind === 'doll' ? 'Đặt cọc 50% khi chốt đơn, thanh toán phần còn lại khi hàng về.' : ''}</div>
+            <div className="notice warn small">Hàng <b>đặt trước</b>: xưởng làm theo đơn, về Việt Nam khoảng <b>{p.lead_days}–{p.lead_days + 20} ngày</b>. {p.kind === 'doll' ? 'Trả trước tối thiểu 50% khi chốt đơn (tự chọn mức), thanh toán phần còn lại khi hàng về.' : ''}</div>
           ) : <div className="notice small">Hàng <b>có sẵn</b> tại Việt Nam, giao 1–3 ngày.</div>}
           <button className="link-btn small" onClick={() => setGuide(true)}>Bảng size BJD (chiều cao, size tóc, size mắt)</button>
           {hasVariants(p) && (
@@ -252,7 +252,7 @@ export default function Product() {
           </div>
 
           <div className="buy-btns">
-            <button className="btn big buy" disabled={out} onClick={() => add(true)}>{p.stock_type === 'order' ? 'ĐẶT TRƯỚC NGAY' : 'MUA NGAY'}<small>{p.stock_type === 'order' ? (p.kind === 'doll' ? 'Cọc 50%, trả phần còn lại khi hàng về' : 'Hàng về khoảng ' + p.lead_days + ' ngày') : 'Giao tận nơi hoặc nhận tại showroom'}</small></button>
+            <button className="btn big buy" disabled={out} onClick={() => add(true)}>{p.stock_type === 'order' ? 'ĐẶT TRƯỚC NGAY' : 'MUA NGAY'}<small>{p.stock_type === 'order' ? (p.kind === 'doll' ? 'Cọc từ 50%, trả phần còn lại khi hàng về' : 'Hàng về khoảng ' + p.lead_days + ' ngày') : 'Giao tận nơi hoặc nhận tại showroom'}</small></button>
             <button className="btn big ghost" disabled={out} onClick={() => add(false)}><Icon name="cart" /> Thêm vào giỏ</button>
             <button className={'btn big ghost wish-btn' + (liked ? ' on' : '')} onClick={() => toggleWish(p.id)} aria-label="Yêu thích" aria-pressed={liked}><Icon name="heart" /></button>
           </div>
@@ -275,7 +275,7 @@ export default function Product() {
         {tab === 'mo-ta' && p.description.split('\n\n').map((t, i) => <p key={i}>{t}</p>)}
         {tab === 'thong-so' && <table className="table specs"><tbody>{specs.map(([k, v]) => <tr key={k}><th>{k}</th><td>{v}</td></tr>)}</tbody></table>}
         {tab === 'danh-gia' && <Reviews product={p} />}
-        {tab === 'chinh-sach' && <ul><li>Quay video khi mở hàng; báo lỗi đúc, nứt vỡ trong 48 giờ để được đổi hoặc hoàn tiền.</li><li>Hàng đặt trước: cọc 50%, hoàn cọc 100% nếu xưởng không giao được hoặc trễ quá 30 ngày so với hẹn.</li><li>Resin có thể ngả vàng theo thời gian khi gặp nắng — tránh ánh nắng trực tiếp, bảo quản trong túi/hộp.</li><li>Sản phẩm sưu tầm cho người từ 15 tuổi, có chi tiết nhỏ.</li></ul>}
+        {tab === 'chinh-sach' && <ul><li>Quay video khi mở hàng; báo lỗi đúc, nứt vỡ trong 48 giờ để được đổi hoặc hoàn tiền.</li><li>Hàng đặt trước: cọc từ 50%, hoàn cọc 100% nếu xưởng không giao được hoặc trễ quá 30 ngày so với hẹn.</li><li>Resin có thể ngả vàng theo thời gian khi gặp nắng — tránh ánh nắng trực tiếp, bảo quản trong túi/hộp.</li><li>Sản phẩm sưu tầm cho người từ 15 tuổi, có chi tiết nhỏ.</li></ul>}
       </div>
 
       <Rail title="Sản phẩm tương tự" items={related} />

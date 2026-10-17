@@ -169,7 +169,7 @@ function Footer() {
         <div><Icon name="truck" size={28} /><span><b>Hàng có sẵn giao 1–3 ngày</b><small>Hàng order 25–60 ngày</small></span></div>
         <div><Icon name="refresh" size={28} /><span><b>Đổi trả 48 giờ</b><small>Với lỗi đúc, vỡ khi vận chuyển</small></span></div>
         <div><Icon name="shield" size={28} /><span><b>Đóng gói chống sốc</b><small>Đệm khí, hộp cứng</small></span></div>
-        <div><Icon name="card" size={28} /><span><b>Đặt cọc 50%</b><small>Hàng order, phần còn lại khi hàng về</small></span></div>
+        <div><Icon name="card" size={28} /><span><b>Đặt cọc từ 50%</b><small>Hàng order, phần còn lại khi hàng về</small></span></div>
       </div>
       <div className="foot-cols container">
         <div>

@@ -1,5 +1,6 @@
 // Hàm dùng chung cho các API thanh toán (Vercel bỏ qua file bắt đầu bằng "_" khi tạo route).
 import crypto from 'node:crypto'
+import { orderCodeIn } from '../src/lib/pricing.js'
 
 const env = k => process.env[k] || ''
 
@@ -19,6 +20,21 @@ export async function getOrder(code) {
 }
 export async function recordPayment(code, amount, ok, ref, gateway) {
   return rest('rpc/record_payment', { method: 'POST', body: JSON.stringify({ p_code: code, p_amount: amount, p_ok: ok, p_ref: ref, p_gateway: gateway }) })
+}
+export async function recordBankTransfer({ ref, code, amount, content }) {
+  return rest('rpc/record_bank_transfer', { method: 'POST', body: JSON.stringify({ p_gateway: 'chuyển khoản', p_ref: ref, p_code: code, p_amount: amount, p_content: content }) })
+}
+
+// ------------------------------------------------------------ SePay (báo tiền vào tài khoản ngân hàng qua webhook)
+// SePay gửi kèm header "Authorization: Apikey <khóa>" (khóa đặt ở SePay và biến SEPAY_API_KEY trên Vercel).
+// Trả về null nếu sai khóa; { skip: true } nếu là tiền ra; còn lại { ref, code, amount, content }.
+export function sepayVerify(headers, body, key = env('SEPAY_API_KEY')) {
+  const got = String(headers?.authorization || '').replace(/^apikey\s+/i, '').trim()
+  if (!key || got.length !== key.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(key))) return null
+  const b = body || {}
+  if (b.transferType !== 'in') return { skip: true }
+  const content = String(b.content || b.description || '')
+  return { ref: String(b.id ?? b.referenceCode ?? ''), code: orderCodeIn(b.code) || orderCodeIn(content), amount: Math.round(Number(b.transferAmount) || 0), content }
 }
 
 // ------------------------------------------------------------ VNPay (API v2.1.0)

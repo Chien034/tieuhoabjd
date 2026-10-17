@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useShop } from '../lib/store.jsx'
 import { api } from '../lib/api.js'
-import { computeTotals } from '../lib/pricing.js'
+import { computeTotals, minDeposit, DEPOSIT_CHOICES } from '../lib/pricing.js'
 import { vnd, PAYMENT_METHODS } from '../lib/format.js'
 import { PROVINCES, formatAddress, validPhone, validEmail } from '../lib/provinces.js'
 import { withVariantImage, lineLabel, lineNeedsChoice } from '../lib/variants.js'
@@ -22,6 +22,8 @@ export default function Checkout() {
   const [coupon, setCoupon] = useState(null)
   const [errs, setErrs] = useState({})
   const [busy, setBusy] = useState(false)
+  const [depMode, setDepMode] = useState(50) // 50 | 70 | 100 | 'custom'
+  const [depAmount, setDepAmount] = useState('')
   const set = (k, v) => { setF(x => ({ ...x, [k]: v })); setErrs(e => ({ ...e, [k]: undefined })) }
 
   useEffect(() => { api.stores().then(s => { setStores(s); setF(x => ({ ...x, store_id: x.store_id || String(s[0]?.id || '') })) }).catch(() => {}) }, [])
@@ -36,7 +38,13 @@ export default function Checkout() {
   }, [user])
 
   const preorder = cart.some(l => l.product.stock_type === 'order')
-  const totals = useMemo(() => computeTotals({ subtotal, delivery: f.delivery, coupon, preorder, fees: info }), [subtotal, f.delivery, coupon, preorder, info])
+  const depositChoice = depMode === 'custom' ? { amount: depAmount } : { pct: depMode }
+  const totals = useMemo(() => computeTotals({ subtotal, delivery: f.delivery, coupon, preorder, fees: info, depositChoice }), [subtotal, f.delivery, coupon, preorder, info, depMode, depAmount]) // eslint-disable-line
+  const payNow = totals.deposit || totals.total // số trả trước (deposit 0 = trả hết)
+  const pickDeposit = m => {
+    if (m === 'custom' && !depAmount) setDepAmount(String(payNow))
+    setDepMode(m); setErrs(e => ({ ...e, deposit: undefined }))
+  }
   useEffect(() => { if (preorder && f.payment_method === 'cod') setF(x => ({ ...x, payment_method: 'bank' })) }, [preorder, f.payment_method])
   const savedAddr = addrs.find(a => a.id === addrId)
 
@@ -59,6 +67,7 @@ export default function Checkout() {
     if (f.delivery === 'pickup' && !f.store_id) e.store_id = 'Chọn cửa hàng'
     if (f.want_invoice && (!f.inv_company.trim() || !/^\d{10}(-\d{3})?$/.test(f.inv_tax.trim()))) e.inv_tax = 'Nhập tên công ty và mã số thuế (10 hoặc 13 số)'
     if (totals.couponError) e.coupon = totals.couponError
+    if (preorder && totals.depositError) e.deposit = totals.depositError
     setErrs(e)
     return Object.keys(e).length === 0
   }
@@ -77,6 +86,7 @@ export default function Checkout() {
         note: f.note.trim(), gift_wrap: f.gift_wrap,
         invoice: f.want_invoice ? { company: f.inv_company.trim(), tax_code: f.inv_tax.trim(), address: f.inv_address.trim() } : null,
         coupon_code: coupon?.code || null, payment_method: f.payment_method,
+        ...(preorder ? { deposit: payNow } : {}),
       })
       if (user && f.delivery === 'ship' && !savedAddr && addrs.length === 0) {
         api.saveAddress({ full_name: f.full_name, phone: f.phone, province: f.province, ward: f.ward, line: f.line, is_default: true }).catch(() => {})
@@ -161,7 +171,23 @@ export default function Checkout() {
           <section className="panel">
             <h3>3. Phương thức thanh toán</h3>
             <div className="pay-methods">
-              {preorder && <div className="notice warn small">Đơn có hàng <b>đặt trước</b>: thanh toán cọc 50% bây giờ, phần còn lại khi hàng về. Không áp dụng COD.</div>}
+              {preorder && <div className="notice warn small">Đơn có hàng <b>đặt trước</b>: trả trước tối thiểu 50% bây giờ, phần còn lại khi hàng về. Không áp dụng COD.</div>}
+              {preorder && (
+                <div className={'deposit-pick' + (errs.deposit ? ' has-err' : '')}>
+                  <b>Số tiền trả trước</b>
+                  <div className="seg">
+                    {DEPOSIT_CHOICES.map(p => (
+                      <label key={p} className={depMode === p ? 'on' : ''}><input type="radio" name="dep" checked={depMode === p} onChange={() => pickDeposit(p)} /> {p === 100 ? 'Trả hết' : `Cọc ${p}%`}</label>
+                    ))}
+                    <label className={depMode === 'custom' ? 'on' : ''}><input type="radio" name="dep" checked={depMode === 'custom'} onChange={() => pickDeposit('custom')} /> Số khác</label>
+                  </div>
+                  {depMode === 'custom' && (
+                    <Field label="Số tiền muốn trả trước (₫)" error={errs.deposit || totals.depositError} hint={`Từ ${vnd(minDeposit(totals.total))} (50%) đến ${vnd(totals.total)}`}>
+                      <input className="input" inputMode="numeric" value={depAmount ? Number(depAmount).toLocaleString('vi-VN') : ''} onChange={e => { setDepAmount(e.target.value.replace(/\D/g, '').slice(0, 12)); setErrs(x => ({ ...x, deposit: undefined })) }} placeholder={String(minDeposit(totals.total))} />
+                    </Field>
+                  )}
+                </div>
+              )}
               {PAYMENT_METHODS.filter(m => !(preorder && m.key === 'cod')).map(m => (
                 <label key={m.key} className={'pay-opt' + (f.payment_method === m.key ? ' on' : '')}>
                   <input type="radio" name="pm" checked={f.payment_method === m.key} onChange={() => set('payment_method', m.key)} />
@@ -194,12 +220,12 @@ export default function Checkout() {
           {totals.discount > 0 && <div className="row-between ok-text"><span>Giảm giá</span><span>−{vnd(totals.discount)}</span></div>}
           <div className="row-between"><span>Phí giao hàng</span><span>{totals.shipping ? vnd(totals.shipping) : 'Miễn phí'}</span></div>
           <div className="row-between total"><span>Tổng đơn hàng</span><b className="accent">{vnd(totals.total)}</b></div>
-          {totals.deposit > 0 && <>
-            <div className="row-between deposit"><span>Cọc trước (50%)</span><b>{vnd(totals.deposit)}</b></div>
-            <div className="row-between muted small"><span>Còn lại khi hàng về</span><span>{vnd(totals.total - totals.deposit)}</span></div>
+          {preorder && <>
+            <div className="row-between deposit"><span>Trả trước ({totals.total ? Math.round(payNow / totals.total * 100) : 100}%)</span><b>{vnd(payNow)}</b></div>
+            {totals.deposit > 0 && <div className="row-between muted small"><span>Còn lại khi hàng về</span><span>{vnd(totals.total - totals.deposit)}</span></div>}
           </>}
           <p className="muted small">Giá đã gồm phí vận chuyển quốc tế và thuế. Hàng đặt trước giữ nguyên giá khi đã cọc.</p>
-          <button className="btn block big" disabled={busy}>{busy ? 'Đang đặt hàng…' : ['vnpay', 'momo'].includes(f.payment_method) ? (totals.deposit ? 'Đặt hàng & thanh toán cọc' : 'Đặt hàng & thanh toán') : 'Đặt hàng'}</button>
+          <button className="btn block big" disabled={busy}>{busy ? 'Đang đặt hàng…' : ['vnpay', 'momo'].includes(f.payment_method) ? (totals.deposit ? 'Đặt hàng & trả trước ' + vnd(totals.deposit) : 'Đặt hàng & thanh toán') : 'Đặt hàng'}</button>
           <p className="muted small center">Bấm đặt hàng là bạn đồng ý với <Link to="/chinh-sach/giao-hang">điều khoản mua hàng</Link>.</p>
         </aside>
       </form>
