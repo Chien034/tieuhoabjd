@@ -49,7 +49,7 @@ Giá nhập chỉ quản trị xem được (bảng `product_costs` có RLS ch�
 ## 3. Chạy thử
 
 ```bash
-cd shop && npm install && npm run dev     # http://localhost:5173
+npm install && npm run dev     # http://localhost:5173
 npm test                                  # kiểm thử tính giá, cọc, lọc, chữ ký VNPay/MoMo
 node scripts/bang-gia-nhap.mjs            # xuất lại bảng giá nhập
 ```
@@ -60,9 +60,11 @@ Quản trị demo: **admin@tieuhoa.vn / admin123**. Mã giảm giá: `BJD10`, `G
 Chạy script — tự sao lưu mã nguồn + dữ liệu vào **E:\\Tiểu hoa kế toán**, hướng dẫn tạo Supabase (tự chép SQL vào clipboard), đặt biến môi trường và đưa web lên Vercel:
 
 ```powershell
-cd <thư mục repo>\shop
+cd <thư mục tieuhoabjd>
 powershell -ExecutionPolicy Bypass -File .\trien-khai\trien-khai-windows.ps1
 ```
+
+Hướng dẫn từng bước (kể cả cách lấy mã nguồn, xử lý lỗi): [`trien-khai/HUONG-DAN-TRIEN-KHAI.md`](trien-khai/HUONG-DAN-TRIEN-KHAI.md).
 
 Thư mục lưu trữ sau khi chạy:
 

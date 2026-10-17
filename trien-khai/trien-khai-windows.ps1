@@ -1,12 +1,14 @@
 ﻿# =====================================================================
 #  Tiểu Hoa BJD — đưa web lên mạng + lưu dữ liệu về E:\Tiểu hoa kế toán
-#  Chạy trong PowerShell, tại thư mục shop:
+#  Chạy trong PowerShell, tại thư mục gốc mã nguồn (thư mục có package.json):
 #     powershell -ExecutionPolicy Bypass -File .\trien-khai\trien-khai-windows.ps1
 #  Cần: Node.js 20+ (https://nodejs.org), tài khoản Supabase và Vercel (đăng nhập bằng GitHub được).
 #  Khóa bí mật chỉ nhập vào cửa sổ này, script không lưu chúng ra file.
 # =====================================================================
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+# Windows PowerShell 5.1 mặc định đẩy chữ sang chương trình khác bằng ASCII → "Tiểu" thành "Ti?u" trên Vercel
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $Shop = Split-Path -Parent $PSScriptRoot
 Set-Location $Shop
 
@@ -32,11 +34,14 @@ Write-Host "Node.js $node"
 # ---------------------------------------------------------------- 2. Thư mục lưu trữ
 Buoc 2 'Tạo thư mục lưu trữ và sao chép dữ liệu'
 $Kho = Hoi 'Thư mục lưu trữ' 'E:\Tiểu hoa kế toán'
+$O = [IO.Path]::GetPathRoot($Kho)
+if (-not $O -or -not (Test-Path $O)) { throw "Không thấy ổ $O — gõ thư mục khác, vd D:\Tiểu hoa kế toán" }
 $Thu = @('ma-nguon', 'co-so-du-lieu', 'bang-gia', 'anh-san-pham', 'sao-luu', 'nhap-taobao')
 foreach ($t in $Thu) { New-Item -ItemType Directory -Force -Path (Join-Path $Kho $t) | Out-Null }
 Copy-Item -Force "$Shop\supabase\schema.sql", "$Shop\supabase\seed.sql" (Join-Path $Kho 'co-so-du-lieu')
 Copy-Item -Force "$Shop\docs\bang-gia-nhap.md", "$Shop\docs\bang-gia-nhap.csv" (Join-Path $Kho 'bang-gia')
 Copy-Item -Force "$Shop\docs\mau-nhap-taobao.csv", "$Shop\trien-khai\HUONG-DAN-TAOBAO.md" (Join-Path $Kho 'nhap-taobao')
+Copy-Item -Force "$Shop\trien-khai\HUONG-DAN-TRIEN-KHAI.md" $Kho
 # Mã nguồn (bỏ node_modules, dist, file khóa). robocopy trả mã 0–7 là thành công.
 robocopy $Shop (Join-Path $Kho 'ma-nguon') /E /XD node_modules dist .vercel /XF .env .env.local /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "Sao chép mã nguồn lỗi (robocopy $LASTEXITCODE)" }
@@ -96,13 +101,17 @@ $MoMoSecret = if ($MoMoPartner) { HoiBiMat 'MoMo secret key' } else { '' }
 Buoc 6 'Đưa web lên Vercel'
 $Du = Hoi 'Tên project trên Vercel (thành địa chỉ <tên>.vercel.app)' 'tieu-hoa-bjd'
 npx --yes vercel@latest login
+if ($LASTEXITCODE -ne 0) { throw 'Đăng nhập Vercel lỗi' }
 npx --yes vercel@latest link --yes --project $Du
 if ($LASTEXITCODE -ne 0) { throw 'vercel link lỗi' }
 
 function DatBien($ten, $giaTri) {
   if ([string]::IsNullOrEmpty($giaTri)) { return }
-  npx --yes vercel@latest env rm $ten production --yes 2>$null | Out-Null
-  $giaTri | npx --yes vercel@latest env add $ten production | Out-Null
+  # PowerShell 5.1: với 'Stop', chữ vercel in ra stderr (kể cả dòng "Vercel CLI x.y") bị coi là lỗi và dừng script
+  $ErrorActionPreference = 'Continue'
+  npx --yes vercel@latest env rm $ten production --yes *> $null   # biến chưa có thì lỗi — bỏ qua
+  $kq = $giaTri | npx --yes vercel@latest env add $ten production 2>&1
+  if ($LASTEXITCODE -ne 0) { $kq | ForEach-Object { Write-Host "  $_" }; throw "Không đặt được biến $ten trên Vercel" }
   Write-Host "  đặt $ten"
 }
 $bien = [ordered]@{
@@ -115,11 +124,14 @@ $bien = [ordered]@{
 }
 foreach ($k in $bien.Keys) { DatBien $k $bien[$k] }
 
-$out = npx --yes vercel@latest deploy --prod --yes
+npx --yes vercel@latest deploy --prod --yes
 if ($LASTEXITCODE -ne 0) { throw 'Deploy lỗi' }
-$Site = "https://$Du.vercel.app"
+# Tên đã có người dùng thì Vercel cấp địa chỉ khác (vd tieu-hoa-bjd-abc.vercel.app) — xem dòng "Aliased" ở trên
+$Site = (Hoi 'Địa chỉ web (dòng Aliased/Production ở trên)' "https://$Du.vercel.app").TrimEnd('/')
+if ($Site -notmatch '^https://') { $Site = "https://$Site" }
 DatBien 'SITE_URL' $Site
 npx --yes vercel@latest deploy --prod --yes | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Deploy lần 2 (sau khi đặt SITE_URL) lỗi' }
 Write-Host "Web đã chạy: $Site" -ForegroundColor Green
 
 # ---------------------------------------------------------------- 7. Ghi chú cấu hình (không chứa khóa bí mật)
