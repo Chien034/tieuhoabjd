@@ -6,6 +6,7 @@ import { filterProducts, relatedProducts } from '../src/lib/catalog.js'
 import { PRODUCTS, COUPONS, CATEGORIES } from '../src/lib/data.js'
 import { decodeCsv, num, parseCsv, rowsToProducts } from '../src/lib/csvImport.js'
 import { readFileSync } from 'node:fs'
+import { normalizeCoupon, couponError, couponStatus, customerUses, couponStats, describeCoupon, toLocalInput } from '../src/lib/coupons.js'
 import { vnpayUrl, vnpayVerify, momoCreateBody, momoVerify, hmac, codeFromRef } from '../api/_lib.js'
 
 const C = code => COUPONS.find(c => c.code === code)
@@ -197,4 +198,39 @@ test('cài đặt cửa hàng: logo chỉ nhận ảnh https / ảnh nhúng, có
   assert.equal(normalizeInfo({ logo: 'javascript:alert(1)' }).logo, '')
   assert.equal(normalizeInfo({ logo: '' }, { ...DEFAULT_INFO, logo: 'https://a/b.png' }).logo, '')
   assert.equal(normalizeInfo({ zalo_name: ' Minh Nguyệt﻿ ' }).zalo_name, 'Minh Nguyệt')
+})
+
+test('quản trị mã giảm giá: làm sạch form, kiểm tra, mô tả tự sinh', () => {
+  const c = normalizeCoupon({ code: ' vip 50k\u200B', kind: 'amount', value: '50.000', min_order: '300.000', max_discount: 9, usage_limit: '', per_customer_limit: '1', starts_at: '', expires_at: null, description: '  ' })
+  assert.equal(c.code, 'VIP50K')
+  assert.deepEqual([c.value, c.min_order, c.max_discount, c.usage_limit, c.per_customer_limit, c.starts_at], [50_000, 300_000, null, null, 1, null])
+  assert.equal(c.description, 'Giảm 50.000đ cho đơn từ 300.000đ')
+  assert.equal(couponError(c), null)
+  assert.equal(describeCoupon({ kind: 'percent', value: 10, max_discount: 500_000, min_order: 0 }), 'Giảm 10% (tối đa 500.000đ)')
+  assert.equal(normalizeCoupon({ code: 'SHIP0', kind: 'freeship', value: 99 }).value, 0)
+  assert.ok(couponError(normalizeCoupon({ code: 'AB', kind: 'percent', value: 10 })))
+  assert.ok(couponError(normalizeCoupon({ code: 'Có-dấu', kind: 'percent', value: 10 })))
+  assert.ok(couponError(normalizeCoupon({ code: 'P150', kind: 'percent', value: 150 })))
+  assert.ok(couponError(normalizeCoupon({ code: 'A0', kind: 'amount', value: 0 })))
+  assert.ok(couponError(normalizeCoupon({ code: 'NGAY', kind: 'percent', value: 5, starts_at: '2026-10-20T10:00', expires_at: '2026-10-19T10:00' })))
+  assert.equal(toLocalInput(normalizeCoupon({ code: 'NGAY', kind: 'percent', value: 5, starts_at: '2026-10-20T10:30' }).starts_at), '2026-10-20T10:30')
+})
+
+test('trạng thái mã và đếm lượt theo khách', () => {
+  const now = new Date('2026-10-17T00:00:00Z')
+  const base = { code: 'X', active: true, used: 0, usage_limit: null }
+  assert.equal(couponStatus(base, now).ok, true)
+  assert.equal(couponStatus({ ...base, active: false }, now).label, 'Đã tắt')
+  assert.equal(couponStatus({ ...base, expires_at: '2026-10-16T00:00:00+00:00' }, now).label, 'Hết hạn')
+  assert.equal(couponStatus({ ...base, starts_at: '2026-10-18T00:00:00+00:00' }, now).label, 'Chưa bắt đầu')
+  assert.equal(couponStatus({ ...base, used: 3, usage_limit: 3 }, now).label, 'Hết lượt')
+  const orders = [
+    { coupon_code: 'X', status: 'cho_xac_nhan', phone: '0912 345 678', user_id: null, discount: 50_000 },
+    { coupon_code: 'X', status: 'da_huy', phone: '0912345678', user_id: null, discount: 50_000 },
+    { coupon_code: 'X', status: 'da_giao', phone: '0999999999', user_id: 'u1', discount: 20_000 },
+  ]
+  assert.equal(customerUses(orders, 'X', { phone: '0912345678' }), 1)
+  assert.equal(customerUses(orders, 'X', { phone: '0900000000', user_id: 'u1' }), 1)
+  assert.equal(customerUses(orders, 'X', { phone: '0900000000' }), 0)
+  assert.deepEqual(couponStats(orders).X, { orders: 2, discount: 70_000 })
 })

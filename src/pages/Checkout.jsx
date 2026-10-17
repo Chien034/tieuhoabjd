@@ -88,6 +88,7 @@ export default function Checkout() {
       nav('/dat-hang/' + order.code, { replace: true })
     } catch (e) {
       toast(e.message, 'bad'); reloadProducts()
+      if (coupon && /^(Mã|Bạn đã dùng hết lượt)/.test(e.message)) setErrs(x => ({ ...x, coupon: e.message }))
     } finally { setBusy(false) }
   }
 
