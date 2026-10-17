@@ -1,7 +1,7 @@
 # Tìm hàng Taobao + lấy ảnh thật → đưa lên web Tiểu Hoa BJD
 
 Việc này cần trình duyệt trên **máy tính của anh** (Taobao bắt đăng nhập), nên làm trong một phiên Claude chạy trên máy:
-**Claude Desktop** (bật *Claude in Chrome* hoặc *Computer use*), hoặc mở PowerShell tại thư mục `shop` và chạy `claude`.
+**Claude Desktop** (bật *Claude in Chrome* hoặc *Computer use*), hoặc mở PowerShell tại thư mục mã nguồn `tieuhoabjd` (bản đã chép ở `E:\Tiểu hoa kế toán\ma-nguon`) và chạy `claude`.
 
 ## Cách làm
 
@@ -42,6 +42,9 @@ sku,ten,danh_muc,ti_le,loai_bo,mau_da,gioi_tinh,tinh_trang,so_ngay_ve,gia_te,can
   - ti_le: 1/3 | 1/4 | 1/6 | 1/8 | all
   - loai_bo (búp bê): fullset | nude ; mau_da: trang-hong | trang-tu-nhien | trang-su | ngam
   - gioi_tinh: nu | nam | unisex ; tinh_trang: order (mặc định) | co-san
+  - so_ngay_ve: số ngày từ lúc đặt đến khi hàng về VN (bỏ trống: búp bê 35, phụ kiện 15)
+  - gia_te, ship_noi_dia_te: số tệ, không ghi ký hiệu ¥ ; can_nang_kg: số kg, vd 1.5
+  - Viết đúng các giá trị trên (có gạch nối, không dấu): web báo lỗi dòng nào gõ sai, vd "co san"
   - mo_ta: mô tả ngắn tiếng Việt (chất liệu, gồm những gì, kích thước), KHÔNG chép nguyên văn của shop
 
 Ảnh: tải 3–6 ảnh sản phẩm của mỗi mẫu (ảnh chính + ảnh chi tiết, bỏ ảnh quảng cáo có chữ to)
