@@ -1,0 +1,378 @@
+// Lớp dữ liệu chung. Có Supabase (VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY) thì dùng Supabase,
+// không thì chạy CHẾ ĐỘ DEMO: mọi thứ lưu trong localStorage của trình duyệt, thanh toán giả lập.
+import { createClient } from '@supabase/supabase-js'
+import { PRODUCTS, STORES, COUPONS } from './data.js'
+import { computeTotals, amountDue } from './pricing.js'
+import { DEFAULT_IMPORT } from './importCost.js'
+import { resizeImage, blobToDataUrl } from './images.js'
+
+const URL_ = import.meta.env.VITE_SUPABASE_URL
+const KEY_ = import.meta.env.VITE_SUPABASE_ANON_KEY
+export const DEMO = !(URL_ && KEY_)
+export const supabase = DEMO ? null : createClient(URL_, KEY_)
+
+const listeners = new Set()
+export function onAuthChange(fn) { listeners.add(fn); return () => listeners.delete(fn) }
+const emit = u => listeners.forEach(fn => fn(u))
+
+// ---------------------------------------------------------------- DEMO
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch { /* bộ nhớ đầy / bị chặn */ } },
+}
+async function sha(s) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('')
+}
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random())
+const newCode = () => {
+  const d = new Date()
+  return 'HK' + String(d.getFullYear()).slice(2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') +
+    String(Math.floor(Math.random() * 1e5)).padStart(5, '0')
+}
+const normEmail = e => String(e || '').trim().toLowerCase()
+
+async function demoUsers() {
+  let users = ls.get('hk_users', null)
+  if (!users) {
+    users = [{ id: 'admin', email: 'admin@tieuhoa.vn', full_name: 'Quản trị Tiểu Hoa', phone: '0900000000', role: 'admin', pw: await sha('admin123'), created_at: new Date().toISOString() }]
+    ls.set('hk_users', users)
+  }
+  return users
+}
+const publicUser = u => (u ? { id: u.id, email: u.email, full_name: u.full_name, phone: u.phone, role: u.role, birthday: u.birthday || '', gender: u.gender || '' } : null)
+const demoProducts = () => ls.get('hk_products', null) || PRODUCTS
+// Khách không thấy giá nhập: bỏ trường cost khỏi dữ liệu công khai
+const publicProduct = ({ cost, ...p }) => p
+const demoMe = async () => { const id = ls.get('hk_session', null); return id ? (await demoUsers()).find(u => u.id === id) || null : null }
+
+const demo = {
+  async currentUser() { return publicUser(await demoMe()) },
+  async signUp({ email, password, full_name, phone }) {
+    const users = await demoUsers()
+    email = normEmail(email)
+    if (users.some(u => u.email === email)) throw new Error('Email này đã có tài khoản')
+    const u = { id: uid(), email, full_name, phone, role: 'customer', pw: await sha(password), created_at: new Date().toISOString() }
+    ls.set('hk_users', [...users, u]); ls.set('hk_session', u.id)
+    emit(publicUser(u)); return publicUser(u)
+  },
+  async signIn({ email, password }) {
+    const u = (await demoUsers()).find(x => x.email === normEmail(email))
+    if (!u || u.pw !== await sha(password)) throw new Error('Email hoặc mật khẩu không đúng')
+    ls.set('hk_session', u.id); emit(publicUser(u)); return publicUser(u)
+  },
+  async signOut() { ls.set('hk_session', null); emit(null) },
+  async resetPassword(email) {
+    if (!(await demoUsers()).some(u => u.email === normEmail(email))) throw new Error('Không tìm thấy tài khoản với email này')
+    return 'Chế độ demo: không gửi email thật. Hãy đăng ký tài khoản mới hoặc dùng tài khoản demo.'
+  },
+  async updateProfile(patch) {
+    const me = await demoMe(); if (!me) throw new Error('Chưa đăng nhập')
+    const users = (await demoUsers()).map(u => (u.id === me.id ? { ...u, full_name: patch.full_name, phone: patch.phone, birthday: patch.birthday, gender: patch.gender } : u))
+    ls.set('hk_users', users); const nu = publicUser(users.find(u => u.id === me.id)); emit(nu); return nu
+  },
+  async changePassword(oldPw, newPw) {
+    const me = await demoMe(); if (!me) throw new Error('Chưa đăng nhập')
+    if (me.pw !== await sha(oldPw)) throw new Error('Mật khẩu hiện tại không đúng')
+    const pw = await sha(newPw)
+    ls.set('hk_users', (await demoUsers()).map(u => (u.id === me.id ? { ...u, pw } : u)))
+  },
+
+  async products({ includeInactive } = {}) { return demoProducts().filter(p => includeInactive || p.active !== false).map(publicProduct) },
+  async stores() { return STORES },
+  async coupon(code) {
+    const c = COUPONS.find(x => x.code === String(code || '').trim().toUpperCase())
+    if (!c) throw new Error('Mã giảm giá không hợp lệ hoặc đã hết hạn')
+    return c
+  },
+
+  async placeOrder(input) {
+    const me = await demoMe()
+    const products = demoProducts()
+    const items = input.items.map(it => {
+      const p = products.find(x => x.id === it.product_id)
+      if (!p || p.active === false) throw new Error('Có sản phẩm đã ngừng bán, vui lòng kiểm tra lại giỏ hàng')
+      if (p.sizes?.length && !p.sizes.includes(it.size)) throw new Error(`Vui lòng chọn size cho ${p.name}`)
+      if (it.qty < 1 || it.qty > 10) throw new Error('Số lượng không hợp lệ')
+      return { product_id: p.id, sku: p.sku, name: p.name, size: it.size || '', price: p.price, qty: it.qty, line_total: p.price * it.qty, preorder: p.stock_type === 'order' }
+    })
+    if (!items.length) throw new Error('Giỏ hàng trống')
+    for (const p of products) {
+      const need = items.filter(i => i.product_id === p.id).reduce((s, i) => s + i.qty, 0)
+      if (need > p.stock) throw new Error(`${p.name} chỉ còn ${p.stock} sản phẩm`)
+    }
+    const coupon = input.coupon_code ? await demo.coupon(input.coupon_code) : null
+    const subtotal = items.reduce((s, i) => s + i.line_total, 0)
+    const preorder = items.some(i => i.preorder)
+    if (preorder && input.payment_method === 'cod') throw new Error('Đơn có hàng đặt trước cần đặt cọc — vui lòng chọn chuyển khoản, VNPay hoặc MoMo')
+    const t = computeTotals({ subtotal, delivery: input.delivery, coupon, preorder })
+    if (t.couponError) throw new Error(t.couponError)
+    ls.set('hk_products', products.map(p => {
+      const q = items.filter(i => i.product_id === p.id).reduce((s, i) => s + i.qty, 0)
+      return q ? { ...p, stock: p.stock - q, sold: p.sold + q } : p
+    }))
+    const now = new Date().toISOString()
+    const order = {
+      id: uid(), code: newCode(), user_id: me?.id || null,
+      email: normEmail(input.email), full_name: input.full_name, phone: input.phone,
+      delivery: input.delivery, address: input.address || '', store_id: input.store_id || null,
+      note: input.note || '', gift_wrap: !!input.gift_wrap, invoice: input.invoice || null,
+      subtotal, discount: t.discount, shipping_fee: t.shipping, total: t.total, deposit: t.deposit,
+      coupon_code: coupon?.code || null, payment_method: input.payment_method,
+      payment_status: 'chua_thanh_toan', status: 'cho_xac_nhan', created_at: now, updated_at: now,
+      items, events: [{ status: 'cho_xac_nhan', note: 'Đặt hàng thành công', created_at: now }],
+    }
+    ls.set('hk_orders', [order, ...ls.get('hk_orders', [])])
+    return order
+  },
+  async order(code, phone) {
+    const me = await demoMe()
+    const o = ls.get('hk_orders', []).find(x => x.code === String(code).trim().toUpperCase())
+    if (!o) return null
+    const ok = (me && (me.role === 'admin' || o.user_id === me.id)) || (phone && o.phone.replace(/\D/g, '') === String(phone).replace(/\D/g, ''))
+    return ok ? o : null
+  },
+  async myOrders() { const me = await demoMe(); return me ? ls.get('hk_orders', []).filter(o => o.user_id === me.id) : [] },
+  async cancelOrder(code, reason) {
+    const me = await demoMe(); const orders = ls.get('hk_orders', [])
+    const o = orders.find(x => x.code === code)
+    if (!o || !me || (o.user_id !== me.id && me.role !== 'admin')) throw new Error('Không tìm thấy đơn hàng')
+    if (o.status !== 'cho_xac_nhan' || o.payment_status === 'da_thanh_toan') throw new Error('Đơn đã được xác nhận hoặc đã thanh toán, vui lòng gọi hotline để hủy')
+    return demo._setStatus(o.id, { status: 'da_huy' }, reason || 'Khách hủy đơn')
+  },
+  async _setStatus(id, patch, note) {
+    const orders = ls.get('hk_orders', [])
+    const o = orders.find(x => x.id === id)
+    const now = new Date().toISOString()
+    const ev = []
+    if (patch.status && patch.status !== o.status) {
+      ev.push({ status: patch.status, note: note || '', created_at: now })
+      if (patch.status === 'da_huy') {
+        ls.set('hk_products', demoProducts().map(p => {
+          const q = o.items.filter(i => i.product_id === p.id).reduce((s, i) => s + i.qty, 0)
+          return q ? { ...p, stock: p.stock + q, sold: Math.max(0, p.sold - q) } : p
+        }))
+      }
+    }
+    if (patch.payment_status && patch.payment_status !== o.payment_status) {
+      ev.push({ status: 'thanh_toan', note: note || ({ da_coc: 'Đã nhận tiền cọc', da_thanh_toan: 'Đã nhận đủ tiền', hoan_tien: 'Đã hoàn tiền' }[patch.payment_status] || 'Cập nhật thanh toán'), created_at: now })
+      if (patch.payment_status === 'da_thanh_toan') patch.paid_at = now
+    }
+    const n = { ...o, ...patch, updated_at: now, events: [...o.events, ...ev] }
+    ls.set('hk_orders', orders.map(x => (x.id === id ? n : x)))
+    return n
+  },
+
+  async addresses() { const me = await demoMe(); return me ? ls.get('hk_addr_' + me.id, []) : [] },
+  async saveAddress(a) {
+    const me = await demoMe(); if (!me) throw new Error('Chưa đăng nhập')
+    let list = ls.get('hk_addr_' + me.id, [])
+    const row = { ...a, id: a.id || uid() }
+    if (row.is_default || list.length === 0) { list = list.map(x => ({ ...x, is_default: false })); row.is_default = true }
+    list = list.some(x => x.id === row.id) ? list.map(x => (x.id === row.id ? row : x)) : [...list, row]
+    ls.set('hk_addr_' + me.id, list); return row
+  },
+  async deleteAddress(id) { const me = await demoMe(); ls.set('hk_addr_' + me.id, ls.get('hk_addr_' + me.id, []).filter(x => x.id !== id)) },
+
+  async wishlist() { const me = await demoMe(); return me ? ls.get('hk_wish_' + me.id, []) : [] },
+  async toggleWish(pid) {
+    const me = await demoMe(); if (!me) throw new Error('LOGIN')
+    const cur = ls.get('hk_wish_' + me.id, [])
+    const next = cur.includes(pid) ? cur.filter(x => x !== pid) : [...cur, pid]
+    ls.set('hk_wish_' + me.id, next); return next
+  },
+
+  async reviews(pid) { return ls.get('hk_reviews', []).filter(r => r.product_id === pid) },
+  async addReview(pid, rating, content) {
+    const me = await demoMe(); if (!me) throw new Error('LOGIN')
+    const all = ls.get('hk_reviews', []).filter(r => !(r.product_id === pid && r.user_id === me.id))
+    const r = { id: uid(), product_id: pid, user_id: me.id, name: me.full_name, rating, content, created_at: new Date().toISOString() }
+    ls.set('hk_reviews', [r, ...all]); return r
+  },
+
+  // Thanh toán giả lập: trang /thanh-toan/gia-lap đóng vai cổng thanh toán.
+  async startPayment(order) { return `/thanh-toan/gia-lap?code=${order.code}&method=${order.payment_method}` },
+  async demoPaymentResult(code, ok) {
+    const o = ls.get('hk_orders', []).find(x => x.code === code)
+    if (!o) throw new Error('Không tìm thấy đơn')
+    const due = amountDue(o)
+    const next = !ok ? (o.payment_status === 'da_coc' ? 'da_coc' : 'that_bai') : o.payment_status !== 'da_coc' && o.deposit > 0 ? 'da_coc' : 'da_thanh_toan'
+    return demo._setStatus(o.id, { payment_status: next, payment_ref: ok ? 'DEMO' + Date.now() : o.payment_ref },
+      ok ? `Thanh toán ${o.payment_method.toUpperCase()} ${due.toLocaleString('vi-VN')}đ thành công (giả lập)` : 'Thanh toán thất bại (giả lập)')
+  },
+  async verifyReturn() { return null },
+
+  admin: {
+    async orders() { return ls.get('hk_orders', []) },
+    async updateOrder(id, patch, note) { return demo._setStatus(id, patch, note) },
+    async importSettings() { return { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) } },
+    async saveImportSettings(s) { ls.set('hk_import', s) },
+    async costs() { return Object.fromEntries(demoProducts().map(p => [p.id, p.cost || {}])) },
+    async saveProduct(p) {
+      const list = demoProducts()
+      const row = { ...p, id: p.id || 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
+      ls.set('hk_products', list.some(x => x.id === row.id) ? list.map(x => (x.id === row.id ? row : x)) : [row, ...list])
+      return row
+    },
+    async deleteProduct(id) { ls.set('hk_products', demoProducts().map(p => (p.id === id ? { ...p, active: false } : p))) },
+    async customers() { return (await demoUsers()).map(publicUser) },
+    // Demo: ảnh lưu thẳng trong trình duyệt (nhỏ hơn để vừa bộ nhớ ~5 MB)
+    async uploadImage(file) { return blobToDataUrl(await resizeImage(file, 700, 0.8)) },
+    async backup() {
+      return { exported_at: new Date().toISOString(), mode: 'demo', products: demoProducts(), orders: ls.get('hk_orders', []), customers: (await demoUsers()).map(publicUser), import_settings: { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) } }
+    },
+    async resetDemo() { ['hk_products', 'hk_orders', 'hk_reviews', 'hk_import'].forEach(k => localStorage.removeItem(k)) },
+  },
+}
+
+// ---------------------------------------------------------------- SUPABASE
+const must = ({ data, error }) => { if (error) throw new Error(viError(error.message)); return data }
+function viError(m) {
+  if (/Invalid login credentials/i.test(m)) return 'Email hoặc mật khẩu không đúng'
+  if (/already registered|already been registered/i.test(m)) return 'Email này đã có tài khoản'
+  if (/Email not confirmed/i.test(m)) return 'Email chưa được xác nhận — vui lòng mở hộp thư để kích hoạt tài khoản'
+  if (/Password should be/i.test(m)) return 'Mật khẩu tối thiểu 6 ký tự'
+  return m
+}
+async function sbProfile(user) {
+  if (!user) return null
+  const { data } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+  return { id: user.id, email: user.email, full_name: data?.full_name || user.user_metadata?.full_name || '', phone: data?.phone || '', role: data?.role || 'customer', birthday: data?.birthday || '', gender: data?.gender || '' }
+}
+if (!DEMO) {
+  supabase.auth.onAuthStateChange((_e, s) => { setTimeout(async () => emit(await sbProfile(s?.user)), 0) })
+}
+const ORDER_SELECT = '*, items:order_items(*), events:order_events(status, note, created_at)'
+const sortEvents = o => (o ? { ...o, events: [...(o.events || [])].sort((a, b) => a.created_at.localeCompare(b.created_at)) } : o)
+async function postJSON(url, body) {
+  const { data: s } = await supabase.auth.getSession()
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(s.session ? { Authorization: 'Bearer ' + s.session.access_token } : {}) }, body: JSON.stringify(body) })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j.error || 'Không kết nối được cổng thanh toán')
+  return j
+}
+
+const sb = {
+  async currentUser() { const { data } = await supabase.auth.getUser(); return sbProfile(data.user) },
+  async signUp({ email, password, full_name, phone }) {
+    const data = must(await supabase.auth.signUp({ email: normEmail(email), password, options: { data: { full_name, phone }, emailRedirectTo: location.origin + '/tai-khoan' } }))
+    if (!data.session) return { needConfirm: true }
+    return sbProfile(data.user)
+  },
+  async signIn({ email, password }) { const d = must(await supabase.auth.signInWithPassword({ email: normEmail(email), password })); return sbProfile(d.user) },
+  async signOut() { await supabase.auth.signOut() },
+  async resetPassword(email) {
+    must(await supabase.auth.resetPasswordForEmail(normEmail(email), { redirectTo: location.origin + '/tai-khoan/doi-mat-khau' }))
+    return 'Đã gửi email đặt lại mật khẩu. Vui lòng kiểm tra hộp thư (cả mục Spam).'
+  },
+  async updateProfile(patch) {
+    const { data } = await supabase.auth.getUser()
+    must(await supabase.from('profiles').update({ full_name: patch.full_name, phone: patch.phone, birthday: patch.birthday || null, gender: patch.gender || null }).eq('id', data.user.id))
+    const u = await sbProfile(data.user); emit(u); return u
+  },
+  async changePassword(_old, newPw) { must(await supabase.auth.updateUser({ password: newPw })) },
+
+  async products({ includeInactive } = {}) {
+    let q = supabase.from('products').select('*').order('created_at', { ascending: false })
+    if (!includeInactive) q = q.eq('active', true)
+    return must(await q)
+  },
+  async stores() { return must(await supabase.from('stores').select('*').order('id')) },
+  async coupon(code) {
+    const rows = must(await supabase.rpc('check_coupon', { p_code: String(code || '').trim().toUpperCase() }))
+    if (!rows?.length) throw new Error('Mã giảm giá không hợp lệ hoặc đã hết hạn')
+    return rows[0]
+  },
+  async placeOrder(input) {
+    const code = must(await supabase.rpc('place_order', { p: input }))
+    return { ...(await sb.order(code, input.phone)), _phone: input.phone }
+  },
+  async order(code, phone) {
+    const o = must(await supabase.rpc('track_order', { p_code: String(code).trim().toUpperCase(), p_phone: phone || '' }))
+    return sortEvents(o)
+  },
+  async myOrders() { return must(await supabase.from('orders').select(ORDER_SELECT).order('created_at', { ascending: false })).map(sortEvents) },
+  async cancelOrder(code, reason) { must(await supabase.rpc('cancel_my_order', { p_code: code, p_reason: reason || 'Khách hủy đơn' })) },
+
+  async addresses() { return must(await supabase.from('addresses').select('*').order('created_at')) },
+  async saveAddress(a) {
+    const { data: u } = await supabase.auth.getUser()
+    const row = { ...a, user_id: u.user.id }
+    if (!row.id) delete row.id
+    if (row.is_default) must(await supabase.from('addresses').update({ is_default: false }).eq('user_id', u.user.id))
+    return must(await supabase.from('addresses').upsert(row).select().single())
+  },
+  async deleteAddress(id) { must(await supabase.from('addresses').delete().eq('id', id)) },
+
+  async wishlist() { return must(await supabase.from('wishlist').select('product_id')).map(r => r.product_id) },
+  async toggleWish(pid) {
+    const { data: u } = await supabase.auth.getUser(); if (!u.user) throw new Error('LOGIN')
+    const cur = await sb.wishlist()
+    if (cur.includes(pid)) must(await supabase.from('wishlist').delete().eq('product_id', pid))
+    else must(await supabase.from('wishlist').insert({ product_id: pid, user_id: u.user.id }))
+    return sb.wishlist()
+  },
+
+  async reviews(pid) { return must(await supabase.from('reviews').select('*').eq('product_id', pid).order('created_at', { ascending: false })) },
+  async addReview(pid, rating, content) {
+    const me = await sb.currentUser(); if (!me) throw new Error('LOGIN')
+    return must(await supabase.from('reviews').upsert({ product_id: pid, user_id: me.id, name: me.full_name, rating, content }, { onConflict: 'product_id,user_id' }).select().single())
+  },
+
+  async startPayment(order) {
+    const j = await postJSON('/api/pay', { code: order.code, phone: order.phone })
+    return j.url
+  },
+  async verifyReturn(search) {
+    const r = await fetch('/api/pay-return' + search)
+    return r.ok ? r.json() : null
+  },
+
+  admin: {
+    async orders({ all } = {}) {
+      if (!all) return must(await supabase.from('orders').select(ORDER_SELECT).order('created_at', { ascending: false }).limit(500)).map(sortEvents)
+      const out = [] // sao lưu: lấy hết theo trang 1000 đơn
+      for (let from = 0; ; from += 1000) {
+        const page = must(await supabase.from('orders').select(ORDER_SELECT).order('created_at').range(from, from + 999))
+        out.push(...page.map(sortEvents))
+        if (page.length < 1000) return out
+      }
+    },
+    async updateOrder(id, patch, note) {
+      must(await supabase.rpc('admin_update_order', { p_id: id, p_status: patch.status || null, p_payment_status: patch.payment_status || null, p_note: note || '' }))
+      return sortEvents(must(await supabase.from('orders').select(ORDER_SELECT).eq('id', id).single()))
+    },
+    async importSettings() {
+      const { data } = await supabase.from('import_settings').select('data').eq('id', 1).maybeSingle()
+      return { ...DEFAULT_IMPORT, ...(data?.data || {}) }
+    },
+    async saveImportSettings(s) { must(await supabase.from('import_settings').upsert({ id: 1, data: s })) },
+    async costs() {
+      const rows = must(await supabase.from('product_costs').select('*'))
+      return Object.fromEntries(rows.map(({ product_id, ...c }) => [product_id, c]))
+    },
+    async saveProduct(p) {
+      const { cost, ...row } = p
+      if (!row.id || String(row.id).startsWith('new')) delete row.id
+      const saved = must(await supabase.from('products').upsert(row).select().single())
+      if (cost) must(await supabase.from('product_costs').upsert({ product_id: saved.id, yuan: cost.yuan || 0, weight_kg: cost.weight_kg || 0, cn_ship_yuan: cost.cn_ship_yuan || 0, margin_pct: cost.margin_pct ?? null, source_url: cost.source_url || '' }))
+      return saved
+    },
+    async deleteProduct(id) { must(await supabase.from('products').update({ active: false }).eq('id', id)) },
+    async customers() { return must(await supabase.from('profiles').select('*').order('created_at', { ascending: false })) },
+    async uploadImage(file) {
+      const blob = await resizeImage(file)
+      const d = new Date()
+      const path = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${uid()}.jpg`
+      must(await supabase.storage.from('san-pham').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' }))
+      return supabase.storage.from('san-pham').getPublicUrl(path).data.publicUrl
+    },
+    async backup() {
+      const [products, costs, orders, customers, settings] = await Promise.all([
+        sb.products({ includeInactive: true }), sb.admin.costs(), sb.admin.orders({ all: true }), sb.admin.customers(), sb.admin.importSettings()])
+      return { exported_at: new Date().toISOString(), mode: 'supabase', products: products.map(p => ({ ...p, cost: costs[p.id] || null })), orders, customers, import_settings: settings }
+    },
+  },
+}
+
+export const api = DEMO ? demo : sb
