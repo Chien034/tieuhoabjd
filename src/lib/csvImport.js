@@ -1,7 +1,9 @@
 // Đọc file CSV sản phẩm từ Taobao (mẫu: docs/mau-nhap-taobao.csv) → danh sách sản phẩm + giá nhập.
 import { CATEGORIES, KINDS, SKINS, slugify } from './data.js'
+import { parseVariantCell, normalizeVariants, isVideoLink } from './variants.js'
 
-export const CSV_COLUMNS = ['sku', 'ten', 'danh_muc', 'ti_le', 'loai_bo', 'mau_da', 'gioi_tinh', 'tinh_trang', 'so_ngay_ve', 'gia_te', 'can_nang_kg', 'ship_noi_dia_te', 'link_taobao', 'mo_ta']
+export const CSV_COLUMNS = ['sku', 'ten', 'danh_muc', 'ti_le', 'loai_bo', 'mau_da', 'gioi_tinh', 'tinh_trang', 'so_ngay_ve', 'gia_te', 'can_nang_kg', 'ship_noi_dia_te', 'link_taobao', 'mo_ta', 'bien_the', 'video']
+// bien_the (tùy chọn): "Tên:giá[:tồn] | Tên 2:giá[:tồn]", giá theo đồng. video (tùy chọn): link https, nhiều link cách nhau bằng |
 
 // Excel tiếng Việt "Lưu thành CSV" (không chọn UTF-8) ghi theo bảng mã Windows-1258 → đọc UTF-8 sẽ vỡ dấu
 export function decodeCsv(buf) {
@@ -72,6 +74,10 @@ export function rowsToProducts(rows) {
     pick('tinh_trang', ['order', 'co-san'])
     pick('gioi_tinh', ['nu', 'nam', 'unisex'])
     if (cat?.grp === 'bup-be') { pick('loai_bo', ['fullset', 'nude']); pick('mau_da', SKINS.map(x => x.key)) }
+    const vc = parseVariantCell(g('bien_the'), num)
+    err.push(...vc.errors)
+    const videos = g('video').split(/[|\s]+/).filter(Boolean)
+    if (videos.some(v => !isVideoLink(v))) err.push('video phải là link bắt đầu bằng https://')
     if (err.length) { errors.push(`Dòng ${line}: ${err.join('; ')}`); return }
     const kind = cat.grp === 'bup-be' ? 'doll' : KINDS[cat.slug]
     const order = (g('tinh_trang') || 'order') !== 'co-san'
@@ -85,7 +91,10 @@ export function rowsToProducts(rows) {
         stock_type: order ? 'order' : 'co-san', lead_days: order ? (num(g('so_ngay_ve')) || (kind === 'doll' ? 35 : 15)) : 0,
         stock: order ? 99 : 1, description: g('mo_ta'), images: [], tags: ['moi'], active: true, sizes: [],
         rating: 5, review_count: 0, sold: 0, compare_price: null, collection: null,
+        variants: normalizeVariants(vc.variants.map(v => ({ ...v, stock: v.stock ?? 1 }))), videos,
       },
+      // ô trống = giữ biến thể / video đang có khi cập nhật SKU cũ
+      has: { variants: !!g('bien_the'), videos: videos.length > 0 },
       cost: { yuan, weight_kg: kg, cn_ship_yuan: num(g('ship_noi_dia_te'), true) || 0, margin_pct: null, source_url: link },
     })
   })

@@ -50,6 +50,8 @@ create table if not exists public.products (
   sold int not null default 0,
   description text not null default '',
   images text[] not null default '{}',
+  videos text[] not null default '{}',  -- link video (Supabase Storage 'video-san-pham' hoặc YouTube)
+  variants jsonb not null default '[]', -- biến thể: [{id, name, price, compare_price, stock, image}]
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -151,9 +153,18 @@ create table if not exists public.order_items (
   order_id uuid not null references public.orders(id) on delete cascade,
   product_id text references public.products(id) on delete set null,
   sku text not null, name text not null, size text not null default '',
+  variant_id text not null default '', variant text not null default '',  -- biến thể đã chọn (id + tên lúc đặt)
   price bigint not null, qty int not null check (qty between 1 and 10), line_total bigint not null
 );
 create index if not exists order_items_order_idx on public.order_items(order_id);
+
+-- CSDL tạo trước khi có video / biến thể: thêm cột còn thiếu
+alter table public.products add column if not exists videos text[] not null default '{}';
+alter table public.products add column if not exists variants jsonb not null default '[]';
+alter table public.products drop constraint if exists products_variants_array;
+alter table public.products add constraint products_variants_array check (jsonb_typeof(variants) = 'array');
+alter table public.order_items add column if not exists variant_id text not null default '';
+alter table public.order_items add column if not exists variant text not null default '';
 
 create table if not exists public.order_events (
   id bigserial primary key,
@@ -236,6 +247,15 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- ---------------------------------------------------------------- ĐẶT HÀNG
+-- Cộng / trừ tồn kho của một biến thể trong products.variants (không xuống dưới 0)
+create or replace function public.variant_stock_add(v jsonb, vid text, delta int) returns jsonb
+language sql immutable as $$
+  select coalesce(jsonb_agg(case when e->>'id' = vid
+           then jsonb_set(e, '{stock}', to_jsonb(greatest(0, coalesce((e->>'stock')::int, 0) + delta)))
+           else e end order by o), '[]'::jsonb)
+  from jsonb_array_elements(coalesce(v, '[]'::jsonb)) with ordinality as x(e, o)
+$$;
+
 -- Máy chủ tính lại toàn bộ giá, kiểm tra tồn kho (khóa dòng), trừ kho, ghi đơn. Trả về mã đơn.
 create or replace function public.place_order(p jsonb) returns text
 language plpgsql security definer set search_path = public as $$
@@ -243,6 +263,7 @@ declare
   v_order uuid; v_code text; v_sub bigint := 0; v_disc bigint := 0; v_ship bigint := 0;
   v_cfg public.settings; v_c public.coupons; v_free boolean := false;
   it jsonb; pr public.products; v_qty int; v_size text; v_n int := 0; v_pre boolean := false; v_total bigint;
+  v_vid text; v_vname text; v_vstock int; v_price bigint;
   v_phone text := regexp_replace(coalesce(p->>'phone', ''), '[\s.-]', '', 'g');
   v_delivery text := coalesce(p->>'delivery', 'ship');
 begin
@@ -273,17 +294,31 @@ begin
   for it in select * from jsonb_array_elements(p->'items') loop
     v_qty := (it->>'qty')::int;
     v_size := coalesce(it->>'size', '');
+    v_vid := coalesce(it->>'variant_id', '');
     if v_qty is null or v_qty < 1 or v_qty > 10 then raise exception 'Số lượng không hợp lệ'; end if;
     select * into pr from public.products where id = it->>'product_id' and active for update;
     if not found then raise exception 'Có sản phẩm đã ngừng bán, vui lòng kiểm tra lại giỏ hàng'; end if;
     if cardinality(pr.sizes) > 0 and not (v_size = any(pr.sizes)) then raise exception 'Vui lòng chọn size cho %', pr.name; end if;
     if cardinality(pr.sizes) = 0 then v_size := ''; end if;
+    -- Sản phẩm có biến thể: bắt buộc chọn, giá và tồn kho lấy theo biến thể
+    v_price := pr.price; v_vname := ''; v_vstock := null;
+    if jsonb_array_length(coalesce(pr.variants, '[]'::jsonb)) > 0 then
+      select e->>'name', (e->>'price')::bigint, coalesce((e->>'stock')::int, 0) into v_vname, v_price, v_vstock
+        from jsonb_array_elements(pr.variants) e where e->>'id' = v_vid limit 1;
+      if not found then raise exception 'Vui lòng chọn loại cho %', pr.name; end if;
+      if coalesce(v_price, 0) <= 0 then raise exception 'Loại "%" của % chưa có giá', v_vname, pr.name; end if;
+    else
+      v_vid := '';
+    end if;
     if pr.stock_type = 'order' then v_pre := true;
+    elsif v_vid <> '' and v_vstock < v_qty then raise exception '% (%) chỉ còn % sản phẩm', pr.name, v_vname, v_vstock;
     elsif pr.stock < v_qty then raise exception '% chỉ còn % sản phẩm', pr.name, pr.stock; end if;
-    update public.products set stock = case when stock_type = 'order' then stock else stock - v_qty end, sold = sold + v_qty where id = pr.id;
-    insert into public.order_items (order_id, product_id, sku, name, size, price, qty, line_total)
-    values (v_order, pr.id, pr.sku, pr.name, v_size, pr.price, v_qty, pr.price * v_qty);
-    v_sub := v_sub + pr.price * v_qty;
+    update public.products set stock = case when stock_type = 'order' then stock else stock - v_qty end, sold = sold + v_qty,
+           variants = case when v_vid <> '' and stock_type <> 'order' then public.variant_stock_add(variants, v_vid, -v_qty) else variants end
+     where id = pr.id;
+    insert into public.order_items (order_id, product_id, sku, name, size, variant_id, variant, price, qty, line_total)
+    values (v_order, pr.id, pr.sku, pr.name, v_size, v_vid, coalesce(v_vname, ''), v_price, v_qty, v_price * v_qty);
+    v_sub := v_sub + v_price * v_qty;
     v_n := v_n + 1;
   end loop;
 
@@ -328,14 +363,19 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.track_order(text, text) to anon, authenticated;
 
--- Hoàn kho khi hủy (chỉ hàng có sẵn); ghi thời điểm thanh toán
+-- Hoàn kho khi hủy (chỉ hàng có sẵn, cả tồn của biến thể); ghi thời điểm thanh toán
 create or replace function public.order_changed() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare r record;
 begin
   if new.status is distinct from old.status then
     if new.status = 'da_huy' and old.status <> 'da_huy' then
-      update public.products p set stock = case when p.stock_type = 'order' then p.stock else p.stock + i.qty end, sold = greatest(0, p.sold - i.qty)
-        from public.order_items i where i.order_id = new.id and i.product_id = p.id;
+      -- từng dòng một: một sản phẩm có thể nằm ở nhiều dòng (khác size / biến thể)
+      for r in select i.product_id, i.variant_id, i.qty from public.order_items i where i.order_id = new.id and i.product_id is not null loop
+        update public.products p set stock = case when p.stock_type = 'order' then p.stock else p.stock + r.qty end, sold = greatest(0, p.sold - r.qty),
+               variants = case when r.variant_id <> '' and p.stock_type <> 'order' then public.variant_stock_add(p.variants, r.variant_id, r.qty) else p.variants end
+         where p.id = r.product_id;
+      end loop;
     end if;
   end if;
   if new.payment_status = 'da_thanh_toan' and old.payment_status is distinct from 'da_thanh_toan' then
@@ -487,4 +527,22 @@ do $$ begin
   create policy "anh_sp_xoa" on storage.objects for delete to authenticated using (bucket_id = 'san-pham' and public.is_admin());
 exception when undefined_table or invalid_schema_name then
   raise notice 'Chưa có Supabase Storage — bỏ qua tạo bucket ảnh.';
+end $$;
+
+-- ---------------------------------------------------------------- VIDEO SẢN PHẨM (Storage)
+-- Bucket công khai 'video-san-pham': khách xem, chỉ quản trị tải lên / xóa. Tối đa 50 MB/video (MP4, WEBM, MOV).
+do $$ begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('video-san-pham', 'video-san-pham', true, 52428800, array['video/mp4', 'video/webm', 'video/quicktime'])
+  on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+  drop policy if exists "video_sp_xem" on storage.objects;
+  drop policy if exists "video_sp_tai_len" on storage.objects;
+  drop policy if exists "video_sp_xoa" on storage.objects;
+  create policy "video_sp_xem" on storage.objects for select using (bucket_id = 'video-san-pham');
+  create policy "video_sp_tai_len" on storage.objects for insert to authenticated with check (bucket_id = 'video-san-pham' and public.is_admin());
+  create policy "video_sp_xoa" on storage.objects for delete to authenticated using (bucket_id = 'video-san-pham' and public.is_admin());
+exception when undefined_table or invalid_schema_name then
+  raise notice 'Chưa có Supabase Storage — bỏ qua tạo bucket video.';
 end $$;

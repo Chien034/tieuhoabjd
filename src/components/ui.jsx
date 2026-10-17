@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import ProductArt from './ProductArt.jsx'
 import { vnd, discountPct } from '../lib/format.js'
 import { useShop } from '../lib/store.jsx'
+import { hasVariants, priceRange } from '../lib/variants.js'
 
 export function Icon({ name, size = 20 }) {
   const p = {
@@ -44,11 +45,13 @@ export function Stars({ value = 0, size = 14 }) {
   )
 }
 
-export function Price({ p, big }) {
+export function Price({ p, big, from }) {
   const pct = discountPct(p)
+  const r = priceRange(p)
+  const isFrom = from ?? r.min < r.max // nhiều biến thể khác giá: "Giá từ …"
   return (
     <div className={'price' + (big ? ' big' : '')}>
-      <span className="now">{vnd(p.price)}</span>
+      <span className="now">{isFrom && <small className="from">{big ? 'Giá từ ' : 'Từ '}</small>}{vnd(p.price)}</span>
       {pct > 0 && <><span className="was">{vnd(p.compare_price)}</span><span className="pct">-{pct}%</span></>}
     </div>
   )
@@ -77,7 +80,7 @@ export function ProductCard({ p }) {
         <Price p={p} />
         <div className="card-foot">
           <span><Stars value={p.rating} size={12} /> <small>({p.review_count})</small></span>
-          {p.stock > 0 && p.kind !== 'doll' && (
+          {p.stock > 0 && p.kind !== 'doll' && !hasVariants(p) && (
             <button className="mini-add" onClick={() => { addToCart(p, '', 1, { silent: true }); toast('Đã thêm vào giỏ hàng') }} aria-label="Thêm vào giỏ">
               <Icon name="cart" size={16} />
             </button>

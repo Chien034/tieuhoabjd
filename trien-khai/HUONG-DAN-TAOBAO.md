@@ -46,6 +46,10 @@ sku,ten,danh_muc,ti_le,loai_bo,mau_da,gioi_tinh,tinh_trang,so_ngay_ve,gia_te,can
   - gia_te, ship_noi_dia_te: số tệ, không ghi ký hiệu ¥ ; can_nang_kg: số kg, vd 1.5
   - Viết đúng các giá trị trên (có gạch nối, không dấu): web báo lỗi dòng nào gõ sai, vd "co san"
   - mo_ta: mô tả ngắn tiếng Việt (chất liệu, gồm những gì, kích thước), KHÔNG chép nguyên văn của shop
+  - (tùy chọn) thêm cột bien_the khi một link có nhiều phân loại cùng bán trên một trang, dạng
+    "Tên:giá_bán_đồng | Tên 2:giá_bán_đồng", vd "Nude:5.200.000 | Full set:5.630.000"
+    (giá bán tiền Việt; có thể thêm tồn kho: "Nude:5.200.000:2"). Để trống nếu chỉ có một loại.
+  - (tùy chọn) cột video: link https của video sản phẩm (YouTube hoặc file .mp4), nhiều link cách nhau bằng |
 
 Ảnh: tải 3–6 ảnh sản phẩm của mỗi mẫu (ảnh chính + ảnh chi tiết, bỏ ảnh quảng cáo có chữ to)
 vào E:\Tiểu hoa kế toán\anh-san-pham\<SKU>\1.jpg, 2.jpg…

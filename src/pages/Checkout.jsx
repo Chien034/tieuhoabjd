@@ -5,6 +5,7 @@ import { api } from '../lib/api.js'
 import { computeTotals } from '../lib/pricing.js'
 import { vnd, PAYMENT_METHODS } from '../lib/format.js'
 import { PROVINCES, formatAddress, validPhone, validEmail } from '../lib/provinces.js'
+import { withVariantImage, lineLabel, lineNeedsChoice } from '../lib/variants.js'
 import ProductArt from '../components/ProductArt.jsx'
 import { Breadcrumb, Empty, Field } from '../components/ui.jsx'
 
@@ -64,12 +65,13 @@ export default function Checkout() {
 
   const submit = async ev => {
     ev.preventDefault()
+    if (cart.some(lineNeedsChoice)) { toast('Vui lòng chọn loại / size cho sản phẩm trong giỏ hàng', 'bad'); nav('/gio-hang'); return }
     if (!validate()) { toast('Vui lòng kiểm tra lại thông tin', 'bad'); document.querySelector('.has-err')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); return }
     setBusy(true)
     try {
       const address = f.delivery === 'ship' ? (savedAddr ? formatAddress(savedAddr) : formatAddress(f)) : ''
       const order = await api.placeOrder({
-        items: cart.map(l => ({ product_id: l.product_id, size: l.size, qty: l.qty })),
+        items: cart.map(l => ({ product_id: l.product_id, size: l.size, variant_id: l.variant || '', qty: l.qty })),
         full_name: f.full_name.trim(), phone: f.phone.replace(/[\s.-]/g, ''), email: (f.email || user?.email || '').trim(),
         delivery: f.delivery, address, store_id: f.delivery === 'pickup' ? Number(f.store_id) : null,
         note: f.note.trim(), gift_wrap: f.gift_wrap,
@@ -88,6 +90,7 @@ export default function Checkout() {
       nav('/dat-hang/' + order.code, { replace: true })
     } catch (e) {
       toast(e.message, 'bad'); reloadProducts()
+      if (coupon && /^(Mã|Bạn đã dùng hết lượt)/.test(e.message)) setErrs(x => ({ ...x, coupon: e.message }))
     } finally { setBusy(false) }
   }
 
@@ -174,10 +177,10 @@ export default function Checkout() {
           <h3>Đơn hàng ({cart.reduce((s, l) => s + l.qty, 0)} sản phẩm)</h3>
           <div className="sum-lines">
             {cart.map(l => (
-              <div key={l.product_id + l.size} className="sum-line">
-                <span className="sum-img"><ProductArt product={l.product} /><i>{l.qty}</i></span>
-                <span className="sum-name">{l.product.name}{l.size && <small className="muted"> · Size {l.size}</small>}</span>
-                <b>{vnd(l.product.price * l.qty)}</b>
+              <div key={l.key} className="sum-line">
+                <span className="sum-img"><ProductArt product={withVariantImage(l.product, l.variantObj)} /><i>{l.qty}</i></span>
+                <span className="sum-name">{l.product.name}{lineLabel(l) && <small className="muted"> · {lineLabel(l)}</small>}</span>
+                <b>{vnd(l.unit * l.qty)}</b>
               </div>
             ))}
           </div>

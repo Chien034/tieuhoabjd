@@ -6,6 +6,8 @@ import { computeTotals, amountDue } from './pricing.js'
 import { DEFAULT_IMPORT } from './importCost.js'
 import { resizeImage, blobToDataUrl } from './images.js'
 import { normalizeInfo, normalizeStore, storeError } from './shopInfo.js'
+import { EMPTY_COUPON, normalizeCoupon, couponError, couponStatus, customerUses, normCode } from './coupons.js'
+import { variantOf, videoFileError } from './variants.js'
 
 const URL_ = import.meta.env.VITE_SUPABASE_URL
 const KEY_ = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -45,7 +47,19 @@ const publicUser = u => (u ? { id: u.id, email: u.email, full_name: u.full_name,
 const demoProducts = () => ls.get('hk_products', null) || PRODUCTS
 // Khách không thấy giá nhập: bỏ trường cost khỏi dữ liệu công khai
 const publicProduct = ({ cost, ...p }) => p
+// Trừ (sign = -1) / hoàn (sign = 1) kho theo dòng đơn; hàng đặt trước không trừ kho, chỉ tính lượt bán
+function demoStock(p, items, sign) {
+  const mine = items.filter(i => i.product_id === p.id)
+  const q = mine.reduce((s, i) => s + i.qty, 0)
+  if (!q) return p
+  const sold = Math.max(0, p.sold - sign * q)
+  if (p.stock_type === 'order') return { ...p, sold }
+  const variants = (p.variants || []).map(v => ({ ...v, stock: Math.max(0, v.stock + sign * mine.filter(i => i.variant_id === v.id).reduce((s, i) => s + i.qty, 0)) }))
+  return { ...p, sold, stock: Math.max(0, p.stock + sign * q), ...(p.variants ? { variants } : {}) }
+}
 const demoStores = () => ls.get('hk_stores', null) || STORES
+const demoCoupons = () => ls.get('hk_coupons', null) || COUPONS.map(c => ({ ...EMPTY_COUPON, ...c }))
+const bumpCoupon = (code, d) => ls.set('hk_coupons', demoCoupons().map(c => (c.code === code ? { ...c, used: Math.max(0, c.used + d) } : c)))
 const demoMe = async () => { const id = ls.get('hk_session', null); return id ? (await demoUsers()).find(u => u.id === id) || null : null }
 
 const demo = {
@@ -84,8 +98,10 @@ const demo = {
   async stores() { return demoStores() },
   async shopInfo() { return normalizeInfo(ls.get('hk_shop_info', {})) },
   async coupon(code) {
-    const c = COUPONS.find(x => x.code === String(code || '').trim().toUpperCase())
-    if (!c) throw new Error('Mã giảm giá không hợp lệ hoặc đã hết hạn')
+    const c = demoCoupons().find(x => x.code === normCode(code))
+    if (!c || !couponStatus(c).ok) throw new Error('Mã giảm giá không hợp lệ hoặc đã hết hạn')
+    const me = await demoMe()
+    if (me && c.per_customer_limit && customerUses(ls.get('hk_orders', []), c.code, { user_id: me.id }) >= c.per_customer_limit) throw new Error('Mã giảm giá không hợp lệ hoặc đã hết hạn')
     return c
   },
 
@@ -97,12 +113,21 @@ const demo = {
       if (!p || p.active === false) throw new Error('Có sản phẩm đã ngừng bán, vui lòng kiểm tra lại giỏ hàng')
       if (p.sizes?.length && !p.sizes.includes(it.size)) throw new Error(`Vui lòng chọn size cho ${p.name}`)
       if (it.qty < 1 || it.qty > 10) throw new Error('Số lượng không hợp lệ')
-      return { product_id: p.id, sku: p.sku, name: p.name, size: it.size || '', price: p.price, qty: it.qty, line_total: p.price * it.qty, preorder: p.stock_type === 'order' }
+      const v = variantOf(p, it.variant_id)
+      if (p.variants?.length && !v) throw new Error(`Vui lòng chọn loại cho ${p.name}`)
+      const price = v ? v.price : p.price
+      return { product_id: p.id, sku: p.sku, name: p.name, size: p.sizes?.length ? it.size || '' : '', variant_id: v?.id || '', variant: v?.name || '', price, qty: it.qty, line_total: price * it.qty, preorder: p.stock_type === 'order' }
     })
     if (!items.length) throw new Error('Giỏ hàng trống')
     for (const p of products) {
-      const need = items.filter(i => i.product_id === p.id).reduce((s, i) => s + i.qty, 0)
+      if (p.stock_type === 'order') continue
+      const mine = items.filter(i => i.product_id === p.id)
+      const need = mine.reduce((s, i) => s + i.qty, 0)
       if (need > p.stock) throw new Error(`${p.name} chỉ còn ${p.stock} sản phẩm`)
+      for (const v of p.variants || []) {
+        const nv = mine.filter(i => i.variant_id === v.id).reduce((s, i) => s + i.qty, 0)
+        if (nv > v.stock) throw new Error(`${p.name} (${v.name}) chỉ còn ${v.stock} sản phẩm`)
+      }
     }
     const coupon = input.coupon_code ? await demo.coupon(input.coupon_code) : null
     const subtotal = items.reduce((s, i) => s + i.line_total, 0)
@@ -110,10 +135,11 @@ const demo = {
     if (preorder && input.payment_method === 'cod') throw new Error('Đơn có hàng đặt trước cần đặt cọc — vui lòng chọn chuyển khoản, VNPay hoặc MoMo')
     const t = computeTotals({ subtotal, delivery: input.delivery, coupon, preorder, fees: await demo.shopInfo() })
     if (t.couponError) throw new Error(t.couponError)
-    ls.set('hk_products', products.map(p => {
-      const q = items.filter(i => i.product_id === p.id).reduce((s, i) => s + i.qty, 0)
-      return q ? { ...p, stock: p.stock - q, sold: p.sold + q } : p
-    }))
+    if (coupon?.per_customer_limit && customerUses(ls.get('hk_orders', []), coupon.code, { phone: input.phone, user_id: me?.id }) >= coupon.per_customer_limit) {
+      throw new Error(`Bạn đã dùng hết lượt của mã ${coupon.code} (mỗi khách ${coupon.per_customer_limit} lần)`)
+    }
+    if (coupon) bumpCoupon(coupon.code, 1)
+    ls.set('hk_products', products.map(p => demoStock(p, items, -1)))
     const now = new Date().toISOString()
     const order = {
       id: uid(), code: newCode(), user_id: me?.id || null,
@@ -151,10 +177,8 @@ const demo = {
     if (patch.status && patch.status !== o.status) {
       ev.push({ status: patch.status, note: note || '', created_at: now })
       if (patch.status === 'da_huy') {
-        ls.set('hk_products', demoProducts().map(p => {
-          const q = o.items.filter(i => i.product_id === p.id).reduce((s, i) => s + i.qty, 0)
-          return q ? { ...p, stock: p.stock + q, sold: Math.max(0, p.sold - q) } : p
-        }))
+        if (o.coupon_code) bumpCoupon(o.coupon_code, -1)
+        ls.set('hk_products', demoProducts().map(p => demoStock(p, o.items, 1)))
       }
     }
     if (patch.payment_status && patch.payment_status !== o.payment_status) {
@@ -218,6 +242,17 @@ const demo = {
       ls.set('hk_stores', list.some(x => x.id === row.id) ? list.map(x => (x.id === row.id ? row : x)) : [...list, row])
       return row
     },
+    async coupons() { return demoCoupons() },
+    async saveCoupon(c, isNew) {
+      const row = normalizeCoupon(c); const err = couponError(row); if (err) throw new Error(err)
+      const list = demoCoupons()
+      if (isNew && list.some(x => x.code === row.code)) throw new Error(`Mã ${row.code} đã có`)
+      const old = list.find(x => x.code === row.code)
+      const saved = { ...row, used: old?.used || 0, created_at: old?.created_at || new Date().toISOString() }
+      ls.set('hk_coupons', old ? list.map(x => (x.code === row.code ? saved : x)) : [saved, ...list])
+      return saved
+    },
+    async deleteCoupon(code) { ls.set('hk_coupons', demoCoupons().filter(x => x.code !== code)) },
     async deleteStore(id) {
       if (ls.get('hk_orders', []).some(o => o.store_id === id)) throw new Error('Showroom này đã có đơn nhận tại cửa hàng nên không xóa được. Hãy sửa thông tin thay vì xóa.')
       ls.set('hk_stores', demoStores().filter(x => x.id !== id))
@@ -234,10 +269,11 @@ const demo = {
     // Demo: ảnh lưu thẳng trong trình duyệt (nhỏ hơn để vừa bộ nhớ ~5 MB)
     async uploadImage(file) { return blobToDataUrl(await resizeImage(file, 700, 0.8)) },
     async uploadLogo(file) { return blobToDataUrl(await resizeImage(file, 300, 0.9, { png: true })) },
+    async uploadVideo() { throw new Error('Chế độ demo không lưu được file video — hãy dán link video (YouTube hoặc https://…mp4)') },
     async backup() {
-      return { exported_at: new Date().toISOString(), mode: 'demo', products: demoProducts(), orders: ls.get('hk_orders', []), customers: (await demoUsers()).map(publicUser), import_settings: { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) }, shop_info: await demo.shopInfo(), stores: demoStores() }
+      return { exported_at: new Date().toISOString(), mode: 'demo', products: demoProducts(), orders: ls.get('hk_orders', []), customers: (await demoUsers()).map(publicUser), import_settings: { ...DEFAULT_IMPORT, ...ls.get('hk_import', {}) }, shop_info: await demo.shopInfo(), stores: demoStores(), coupons: demoCoupons() }
     },
-    async resetDemo() { ['hk_products', 'hk_orders', 'hk_reviews', 'hk_import', 'hk_shop_info', 'hk_stores'].forEach(k => localStorage.removeItem(k)) },
+    async resetDemo() { ['hk_products', 'hk_orders', 'hk_reviews', 'hk_import', 'hk_shop_info', 'hk_stores', 'hk_coupons'].forEach(k => localStorage.removeItem(k)) },
   },
 }
 
@@ -383,6 +419,19 @@ const sb = {
       const row = normalizeStore(s); const err = storeError(row); if (err) throw new Error(err)
       return must(await supabase.from('stores').upsert(row).select().single())
     },
+    async coupons() {
+      const r = await supabase.from('coupons').select('*').order('code')
+      return must(r)
+    },
+    async saveCoupon(c, isNew) {
+      const row = normalizeCoupon(c); const err = couponError(row); if (err) throw new Error(err)
+      const r = isNew ? await supabase.from('coupons').insert(row).select().single()
+        : await supabase.from('coupons').update(row).eq('code', row.code).select().single()
+      if (r.error && /starts_at|per_customer_limit/.test(r.error.message)) throw new Error('CSDL chưa cập nhật mã giảm giá — hãy chạy file supabase/ma-giam-gia.sql trong Supabase SQL Editor')
+      if (r.error && /duplicate key|coupons_pkey/.test(r.error.message)) throw new Error(`Mã ${row.code} đã có`)
+      return must(r)
+    },
+    async deleteCoupon(code) { must(await supabase.from('coupons').delete().eq('code', code)) },
     async deleteStore(id) {
       const r = await supabase.from('stores').delete().eq('id', id)
       if (r.error && /foreign key|violates/i.test(r.error.message)) throw new Error('Showroom này đã có đơn nhận tại cửa hàng nên không xóa được. Hãy sửa thông tin thay vì xóa.')
@@ -395,7 +444,14 @@ const sb = {
     async saveProduct(p) {
       const { cost, ...row } = p
       if (!row.id || String(row.id).startsWith('new')) delete row.id
-      const saved = must(await supabase.from('products').upsert(row).select().single())
+      let r = await supabase.from('products').upsert(row).select().single()
+      // CSDL chưa chạy video-bien-the.sql: sản phẩm không có biến thể / video vẫn lưu được
+      if (r.error && /variants|videos/.test(r.error.message) && !row.variants?.length && !row.videos?.length) {
+        const { variants, videos, ...rest } = row
+        r = await supabase.from('products').upsert(rest).select().single()
+      }
+      if (r.error && /variants|videos/.test(r.error.message)) throw new Error('CSDL chưa có cột biến thể / video — hãy chạy file supabase/video-bien-the.sql trong Supabase SQL Editor')
+      const saved = must(r)
       if (cost) must(await supabase.from('product_costs').upsert({ product_id: saved.id, yuan: cost.yuan || 0, weight_kg: cost.weight_kg || 0, cn_ship_yuan: cost.cn_ship_yuan || 0, margin_pct: cost.margin_pct ?? null, source_url: cost.source_url || '' }))
       return saved
     },
@@ -408,6 +464,19 @@ const sb = {
       must(await supabase.storage.from('san-pham').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' }))
       return supabase.storage.from('san-pham').getPublicUrl(path).data.publicUrl
     },
+    // Video lưu ở bucket riêng 'video-san-pham' (tối đa 50 MB), không nén
+    async uploadVideo(file) {
+      const err = videoFileError(file); if (err) throw new Error(err)
+      const ext = (file.name.match(/\.(mp4|webm|mov)$/i)?.[1] || 'mp4').toLowerCase()
+      const type = file.type || { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' }[ext]
+      const d = new Date()
+      const path = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${uid()}.${ext}`
+      const r = await supabase.storage.from('video-san-pham').upload(path, file, { contentType: type, cacheControl: '31536000' })
+      if (r.error && /bucket not found/i.test(r.error.message)) throw new Error('Chưa có kho video — hãy chạy file supabase/video-bien-the.sql trong Supabase SQL Editor')
+      if (r.error && /exceeded|too large|payload/i.test(r.error.message)) throw new Error(`${file.name}: video quá lớn (tối đa 50 MB)`)
+      must(r)
+      return supabase.storage.from('video-san-pham').getPublicUrl(path).data.publicUrl
+    },
     async uploadLogo(file) {
       const blob = await resizeImage(file, 400, 0.9, { png: true })
       const path = `logo/${uid()}.png`
@@ -415,9 +484,9 @@ const sb = {
       return supabase.storage.from('san-pham').getPublicUrl(path).data.publicUrl
     },
     async backup() {
-      const [products, costs, orders, customers, settings, shop_info, stores] = await Promise.all([
-        sb.products({ includeInactive: true }), sb.admin.costs(), sb.admin.orders({ all: true }), sb.admin.customers(), sb.admin.importSettings(), sb.shopInfo(), sb.stores()])
-      return { exported_at: new Date().toISOString(), mode: 'supabase', products: products.map(p => ({ ...p, cost: costs[p.id] || null })), orders, customers, import_settings: settings, shop_info, stores }
+      const [products, costs, orders, customers, settings, shop_info, stores, coupons] = await Promise.all([
+        sb.products({ includeInactive: true }), sb.admin.costs(), sb.admin.orders({ all: true }), sb.admin.customers(), sb.admin.importSettings(), sb.shopInfo(), sb.stores(), sb.admin.coupons()])
+      return { exported_at: new Date().toISOString(), mode: 'supabase', products: products.map(p => ({ ...p, cost: costs[p.id] || null })), orders, customers, import_settings: settings, shop_info, stores, coupons }
     },
   },
 }
