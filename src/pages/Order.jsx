@@ -11,7 +11,7 @@ const STEPS = ['cho_xac_nhan', 'da_xac_nhan', 'dang_giao', 'da_giao']
 const storedPhone = code => { try { return sessionStorage.getItem('hk_phone_' + code) || '' } catch { return '' } }
 
 export function OrderView({ order, onChange }) {
-  const { toast, user, info } = useShop()
+  const { toast, user, info, byId } = useShop()
   const BANK = { id: info.bank_id, acc: info.bank_account, name: info.bank_account_name }
   const [stores, setStores] = useState([])
   const [busy, setBusy] = useState(false)
@@ -82,7 +82,7 @@ export function OrderView({ order, onChange }) {
           {order.items.map((it, i) => (
             <div key={i} className="row-between item-row">
               <span>{it.name}{it.variant && <small className="muted"> · {it.variant}</small>}{it.size && <small className="muted"> · Size {it.size}</small>} <small className="muted">× {it.qty}</small></span>
-              <b>{vnd(it.line_total)}</b>
+              <span className="nowrap">{order.status === 'da_giao' && user && order.user_id === user.id && byId.get(it.product_id) && <Link className="small" to={`/san-pham/${byId.get(it.product_id).slug}#danh-gia`}>Đánh giá</Link>} <b>{vnd(it.line_total)}</b></span>
             </div>
           ))}
           <div className="row-between"><span>Tạm tính</span><span>{vnd(order.subtotal)}</span></div>

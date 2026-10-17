@@ -8,6 +8,7 @@ import { resizeImage, blobToDataUrl } from './images.js'
 import { normalizeInfo, normalizeStore, storeError } from './shopInfo.js'
 import { EMPTY_COUPON, normalizeCoupon, couponError, couponStatus, customerUses, normCode } from './coupons.js'
 import { variantOf, videoFileError } from './variants.js'
+import { withCounters, soldFromOrders, reviewSlots, normalizeReview, reviewError, soldBonus } from './reviews.js'
 
 const URL_ = import.meta.env.VITE_SUPABASE_URL
 const KEY_ = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -47,15 +48,20 @@ const publicUser = u => (u ? { id: u.id, email: u.email, full_name: u.full_name,
 const demoProducts = () => ls.get('hk_products', null) || PRODUCTS
 // Khách không thấy giá nhập: bỏ trường cost khỏi dữ liệu công khai
 const publicProduct = ({ cost, ...p }) => p
-// Trừ (sign = -1) / hoàn (sign = 1) kho theo dòng đơn; hàng đặt trước không trừ kho, chỉ tính lượt bán
+// Trừ (sign = -1) / hoàn (sign = 1) kho theo dòng đơn; hàng đặt trước không trừ kho.
+// Lượt bán không lưu ở đây: tính từ đơn "Đã giao" + số shop cộng thêm (withCounters)
 function demoStock(p, items, sign) {
   const mine = items.filter(i => i.product_id === p.id)
   const q = mine.reduce((s, i) => s + i.qty, 0)
-  if (!q) return p
-  const sold = Math.max(0, p.sold - sign * q)
-  if (p.stock_type === 'order') return { ...p, sold }
+  if (!q || p.stock_type === 'order') return p
   const variants = (p.variants || []).map(v => ({ ...v, stock: Math.max(0, v.stock + sign * mine.filter(i => i.variant_id === v.id).reduce((s, i) => s + i.qty, 0)) }))
-  return { ...p, sold, stock: Math.max(0, p.stock + sign * q), ...(p.variants ? { variants } : {}) }
+  return { ...p, stock: Math.max(0, p.stock + sign * q), ...(p.variants ? { variants } : {}) }
+}
+const demoReviews = () => ls.get('hk_reviews', [])
+// Hàng mẫu: số "đã bán" có sẵn coi như shop cộng thêm (giống lần đầu chạy danh-gia-luot-mua.sql)
+const demoCounted = () => {
+  const sold = soldFromOrders(ls.get('hk_orders', [])); const reviews = demoReviews()
+  return demoProducts().map(p => withCounters({ sold_bonus: p.sold, ...p }, sold, reviews))
 }
 const demoStores = () => ls.get('hk_stores', null) || STORES
 const demoCoupons = () => ls.get('hk_coupons', null) || COUPONS.map(c => ({ ...EMPTY_COUPON, ...c }))
@@ -94,7 +100,7 @@ const demo = {
     ls.set('hk_users', (await demoUsers()).map(u => (u.id === me.id ? { ...u, pw } : u)))
   },
 
-  async products({ includeInactive } = {}) { return demoProducts().filter(p => includeInactive || p.active !== false).map(publicProduct) },
+  async products({ includeInactive } = {}) { return demoCounted().filter(p => includeInactive || p.active !== false).map(publicProduct) },
   async stores() { return demoStores() },
   async shopInfo() { return normalizeInfo(ls.get('hk_shop_info', {})) },
   async coupon(code) {
@@ -209,13 +215,19 @@ const demo = {
     ls.set('hk_wish_' + me.id, next); return next
   },
 
-  async reviews(pid) { return ls.get('hk_reviews', []).filter(r => r.product_id === pid) },
-  async addReview(pid, rating, content) {
+  async reviews(pid) { return demoReviews().filter(r => r.product_id === pid).sort((a, b) => b.created_at.localeCompare(a.created_at)) },
+  async reviewSlots(pid) { const me = await demoMe(); return me ? reviewSlots(ls.get('hk_orders', []), demoReviews(), me.id, pid) : [] },
+  // Chỉ khách có đơn đã giao chứa sản phẩm mới đánh giá được; mỗi đơn một đánh giá (gửi lại = sửa)
+  async submitReview(input) {
     const me = await demoMe(); if (!me) throw new Error('LOGIN')
-    const all = ls.get('hk_reviews', []).filter(r => !(r.product_id === pid && r.user_id === me.id))
-    const r = { id: uid(), product_id: pid, user_id: me.id, name: me.full_name, rating, content, created_at: new Date().toISOString() }
-    ls.set('hk_reviews', [r, ...all]); return r
+    const r = normalizeReview(input); const err = reviewError(r); if (err) throw new Error(err)
+    if (!(await demo.reviewSlots(r.product_id)).some(x => x.order_id === input.order_id)) throw new Error('Bạn chỉ đánh giá được sản phẩm trong đơn hàng đã nhận thành công')
+    const all = demoReviews()
+    const old = all.find(x => x.order_id === input.order_id && x.product_id === r.product_id)
+    const row = { ...old, ...r, id: old?.id || uid(), order_id: input.order_id, user_id: me.id, name: me.full_name || 'Khách hàng', by_shop: false, created_at: old?.created_at || new Date().toISOString() }
+    ls.set('hk_reviews', old ? all.map(x => (x.id === old.id ? row : x)) : [row, ...all]); return row
   },
+  async uploadReviewImage(file) { return blobToDataUrl(await resizeImage(file, 600, 0.8)) },
 
   // Thanh toán giả lập: trang /thanh-toan/gia-lap đóng vai cổng thanh toán.
   async startPayment(order) { return `/thanh-toan/gia-lap?code=${order.code}&method=${order.payment_method}` },
@@ -260,12 +272,21 @@ const demo = {
     async costs() { return Object.fromEntries(demoProducts().map(p => [p.id, p.cost || {}])) },
     async saveProduct(p) {
       const list = demoProducts()
-      const row = { ...p, id: p.id || 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
+      const row = { ...p, sold_bonus: soldBonus(p.sold_bonus ?? p.sold), id: p.id || 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
       ls.set('hk_products', list.some(x => x.id === row.id) ? list.map(x => (x.id === row.id ? row : x)) : [row, ...list])
       return row
     },
     async deleteProduct(id) { ls.set('hk_products', demoProducts().map(p => (p.id === id ? { ...p, active: false } : p))) },
     async customers() { return (await demoUsers()).map(publicUser) },
+    async reviews() { return demoReviews().sort((a, b) => b.created_at.localeCompare(a.created_at)) },
+    async saveReview(input) {
+      const r = normalizeReview(input, { shop: true }); const err = reviewError(r, { shop: true }); if (err) throw new Error(err)
+      const all = demoReviews(); const old = input.id && all.find(x => x.id === input.id)
+      if (old && !old.by_shop) throw new Error('Không sửa được đánh giá của khách, chỉ xóa được')
+      const row = { ...r, id: old?.id || uid(), user_id: null, order_id: null, by_shop: true, created_at: r.created_at || old?.created_at || new Date().toISOString() }
+      ls.set('hk_reviews', old ? all.map(x => (x.id === old.id ? row : x)) : [row, ...all]); return row
+    },
+    async deleteReview(id) { ls.set('hk_reviews', demoReviews().filter(x => x.id !== id)) },
     // Demo: ảnh lưu thẳng trong trình duyệt (nhỏ hơn để vừa bộ nhớ ~5 MB)
     async uploadImage(file) { return blobToDataUrl(await resizeImage(file, 700, 0.8)) },
     async uploadLogo(file) { return blobToDataUrl(await resizeImage(file, 300, 0.9, { png: true })) },
@@ -295,6 +316,8 @@ if (!DEMO) {
   supabase.auth.onAuthStateChange((_e, s) => { setTimeout(async () => emit(await sbProfile(s?.user)), 0) })
 }
 const ORDER_SELECT = '*, items:order_items(*), events:order_events(status, note, created_at)'
+const SQL_REVIEWS = 'CSDL chưa bật lượt mua / đánh giá mới — hãy chạy file supabase/danh-gia-luot-mua.sql trong Supabase SQL Editor'
+const sqlMissing = r => (r.error && /review_slots|submit_review|sold_bonus|by_shop|danh-gia|schema cache/i.test(r.error.message) ? { error: { message: SQL_REVIEWS } } : r)
 const sortEvents = o => (o ? { ...o, events: [...(o.events || [])].sort((a, b) => a.created_at.localeCompare(b.created_at)) } : o)
 async function postJSON(url, body) {
   const { data: s } = await supabase.auth.getSession()
@@ -374,9 +397,25 @@ const sb = {
   },
 
   async reviews(pid) { return must(await supabase.from('reviews').select('*').eq('product_id', pid).order('created_at', { ascending: false })) },
-  async addReview(pid, rating, content) {
-    const me = await sb.currentUser(); if (!me) throw new Error('LOGIN')
-    return must(await supabase.from('reviews').upsert({ product_id: pid, user_id: me.id, name: me.full_name, rating, content }, { onConflict: 'product_id,user_id' }).select().single())
+  async reviewSlots(pid) {
+    const { data: u } = await supabase.auth.getUser(); if (!u.user) return []
+    return must(await supabase.rpc('review_slots', { p_product: pid }).then(sqlMissing))
+  },
+  // Máy chủ (submit_review) kiểm tra khách đã nhận đơn có sản phẩm này; mỗi đơn một đánh giá, gửi lại = sửa
+  async submitReview(input) {
+    const r = normalizeReview(input); const err = reviewError(r); if (err) throw new Error(err)
+    return must(await supabase.rpc('submit_review', { p_product: r.product_id, p_order: input.order_id, p_rating: r.rating, p_content: r.content, p_images: r.images }).then(sqlMissing))
+  },
+  // Ảnh đánh giá: bucket 'danh-gia', khách lưu trong thư mục <mã tài khoản>/, quản trị trong shop/
+  async uploadReviewImage(file) {
+    const { data: u } = await supabase.auth.getUser(); if (!u.user) throw new Error('LOGIN')
+    const me = await sbProfile(u.user)
+    const blob = await resizeImage(file, 1000, 0.82)
+    const path = `${me.role === 'admin' ? 'shop' : u.user.id}/${uid()}.jpg`
+    const r = await supabase.storage.from('danh-gia').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' })
+    if (r.error && /bucket not found/i.test(r.error.message)) throw new Error(SQL_REVIEWS)
+    must(r)
+    return supabase.storage.from('danh-gia').getPublicUrl(path).data.publicUrl
   },
 
   async startPayment(order) {
@@ -442,9 +481,16 @@ const sb = {
       return Object.fromEntries(rows.map(({ product_id, ...c }) => [product_id, c]))
     },
     async saveProduct(p) {
-      const { cost, ...row } = p
+      // sold / sold_real / rating / review_count do máy chủ tự tính; chỉ gửi số shop cộng thêm
+      const { cost, sold, sold_real, rating, review_count, ...row } = p
       if (!row.id || String(row.id).startsWith('new')) delete row.id
+      if ('sold_bonus' in row) row.sold_bonus = soldBonus(row.sold_bonus)
       let r = await supabase.from('products').upsert(row).select().single()
+      if (r.error && /sold_bonus/.test(r.error.message)) {
+        if (row.sold_bonus) throw new Error(SQL_REVIEWS)
+        delete row.sold_bonus
+        r = await supabase.from('products').upsert(row).select().single()
+      }
       // CSDL chưa chạy video-bien-the.sql: sản phẩm không có biến thể / video vẫn lưu được
       if (r.error && /variants|videos/.test(r.error.message) && !row.variants?.length && !row.videos?.length) {
         const { variants, videos, ...rest } = row
@@ -457,6 +503,13 @@ const sb = {
     },
     async deleteProduct(id) { must(await supabase.from('products').update({ active: false }).eq('id', id)) },
     async customers() { return must(await supabase.from('profiles').select('*').order('created_at', { ascending: false })) },
+    async reviews() { return must(await supabase.from('reviews').select('*').order('created_at', { ascending: false }).limit(2000)) },
+    async saveReview(input) {
+      const r = normalizeReview(input, { shop: true }); const err = reviewError(r, { shop: true }); if (err) throw new Error(err)
+      const q = input.id ? supabase.from('reviews').update(r).eq('id', input.id) : supabase.from('reviews').insert(r)
+      return must(await q.select().single().then(sqlMissing))
+    },
+    async deleteReview(id) { must(await supabase.from('reviews').delete().eq('id', id)) },
     async uploadImage(file) {
       const blob = await resizeImage(file)
       const d = new Date()

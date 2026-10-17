@@ -4,6 +4,7 @@ import ProductArt from './ProductArt.jsx'
 import { vnd, discountPct } from '../lib/format.js'
 import { useShop } from '../lib/store.jsx'
 import { hasVariants, priceRange } from '../lib/variants.js'
+import { fmtSold } from '../lib/reviews.js'
 
 export function Icon({ name, size = 20 }) {
   const p = {
@@ -75,11 +76,11 @@ export function ProductCard({ p }) {
         <Icon name="heart" size={18} />
       </button>
       <div className="card-body">
-        <div className="card-meta">{meta} · {p.stock_type === 'order' ? <span className="order-tag">Order ~{p.lead_days} ngày</span> : <span className="ok-text">Có sẵn</span>}{p.sold > 0 && <span> · Đã bán {p.sold > 999 ? (p.sold / 1000).toFixed(1) + 'k' : p.sold}</span>}</div>
+        <div className="card-meta">{meta} · {p.stock_type === 'order' ? <span className="order-tag">Order ~{p.lead_days} ngày</span> : <span className="ok-text">Có sẵn</span>}{p.sold > 0 && <span> · Đã bán {fmtSold(p.sold)}</span>}</div>
         <Link to={`/san-pham/${p.slug}`} className="card-name">{p.name}</Link>
         <Price p={p} />
         <div className="card-foot">
-          <span><Stars value={p.rating} size={12} /> <small>({p.review_count})</small></span>
+          {p.review_count > 0 ? <span><Stars value={p.rating} size={12} /> <small>({p.review_count})</small></span> : <span />}
           {p.stock > 0 && p.kind !== 'doll' && !hasVariants(p) && (
             <button className="mini-add" onClick={() => { addToCart(p, '', 1, { silent: true }); toast('Đã thêm vào giỏ hàng') }} aria-label="Thêm vào giỏ">
               <Icon name="cart" size={16} />

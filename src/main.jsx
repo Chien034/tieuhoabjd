@@ -14,6 +14,7 @@ import Account from './pages/Account.jsx'
 import Admin from './pages/Admin.jsx'
 import { Guide, Stores, Policy, NotFound } from './pages/Info.jsx'
 import './styles.css'
+import './danh-gia.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
