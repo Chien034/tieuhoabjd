@@ -12,6 +12,7 @@ import ProductArt from '../components/ProductArt.jsx'
 import { OrderView } from './Order.jsx'
 import { INFO_FIELDS, BANK_FIELDS, normalizeInfo } from '../lib/shopInfo.js'
 import AdminChat, { useChatUnread } from './AdminChat.jsx'
+import { COUPON_KINDS, EMPTY_COUPON, couponStatus, couponStats, describeCoupon, normalizeCoupon, randomCode, toLocalInput } from '../lib/coupons.js'
 
 function useOrders() {
   const [list, setList] = useState(null)
@@ -476,6 +477,98 @@ function ImportCalc() {
   )
 }
 
+// Mã giảm giá: tạo / sửa / tắt; máy chủ kiểm tra và trừ lượt khi khách đặt hàng
+function Coupons() {
+  const { toast } = useShop()
+  const [list, setList] = useState(null)
+  const [orders] = useOrders()
+  const [edit, setEdit] = useState(null)
+  const load = () => api.admin.coupons().then(setList).catch(x => { toast(x.message, 'bad'); setList([]) })
+  useEffect(() => { load() }, [])
+  const stats = useMemo(() => couponStats(orders), [orders])
+  const toggle = async c => {
+    try { await api.admin.saveCoupon({ ...c, active: !c.active }); toast(c.active ? `Đã tắt mã ${c.code}` : `Đã bật mã ${c.code}`); load() } catch (x) { toast(x.message, 'bad') }
+  }
+  const del = async c => {
+    if (!confirm(`Xóa hẳn mã ${c.code}?`)) return
+    try { await api.admin.deleteCoupon(c.code); toast('Đã xóa mã'); load() } catch (x) { toast(x.message, 'bad') }
+  }
+  const copy = c => navigator.clipboard?.writeText(c.code).then(() => toast('Đã chép mã ' + c.code), () => {})
+  const when = c => [c.starts_at && 'từ ' + dateTime(c.starts_at), c.expires_at && 'đến ' + dateTime(c.expires_at)].filter(Boolean).join(' ') || 'Không giới hạn'
+  return (
+    <div className="panel">
+      <div className="row-between wrap gap"><h3>Mã giảm giá</h3><button className="btn sm" onClick={() => setEdit({ ...EMPTY_COUPON, code: randomCode(), _new: true })}>+ Tạo mã</button></div>
+      <p className="muted small">Khách nhập mã ở bước thanh toán. Máy chủ tự kiểm tra hạn dùng, đơn tối thiểu, số lượt và trừ lượt khi đặt hàng; đơn bị hủy thì trả lại lượt.</p>
+      {!list ? <Spinner /> : !list.length ? <p className="muted">Chưa có mã nào.</p> : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Mã</th><th>Ưu đãi</th><th>Thời gian</th><th className="r">Đã dùng</th><th className="r">Đã giảm</th><th>Trạng thái</th><th /></tr></thead>
+            <tbody>{list.map(c => {
+              const st = couponStatus(c)
+              return (
+                <tr key={c.code} className={c.active ? '' : 'dim'}>
+                  <td className="nowrap"><b>{c.code}</b> <button className="link-btn small" onClick={() => copy(c)}>chép</button></td>
+                  <td>{c.description || describeCoupon(c)}{c.per_customer_limit && <><br /><small className="muted">Mỗi khách {c.per_customer_limit} lần</small></>}</td>
+                  <td className="small">{when(c)}</td>
+                  <td className="r nowrap">{c.used}{c.usage_limit ? ` / ${c.usage_limit}` : ''}</td>
+                  <td className="r nowrap">{stats[c.code] ? <>{vnd(stats[c.code].discount)}<br /><small className="muted">{stats[c.code].orders} đơn</small></> : '—'}</td>
+                  <td><Badge tone={st.tone}>{st.label}</Badge></td>
+                  <td className="r nowrap">
+                    <button className="link-btn" onClick={() => setEdit(c)}>Sửa</button> · <button className="link-btn" onClick={() => toggle(c)}>{c.active ? 'Tắt' : 'Bật'}</button>
+                    {!c.used && !stats[c.code] && <> · <button className="link-btn danger" onClick={() => del(c)}>Xóa</button></>}
+                  </td>
+                </tr>
+              )
+            })}</tbody>
+          </table>
+        </div>
+      )}
+      {edit && <CouponForm value={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load() }} />}
+    </div>
+  )
+}
+
+function CouponForm({ value, onClose, onSaved }) {
+  const { toast } = useShop()
+  const isNew = !!value._new
+  const [c, setC] = useState({ ...EMPTY_COUPON, ...value, starts_at: toLocalInput(value.starts_at), expires_at: toLocalInput(value.expires_at) })
+  const [busy, setBusy] = useState(false)
+  const set = (k, v) => setC(x => ({ ...x, [k]: v }))
+  const num = (k, ph) => <input className="input" value={c[k] == null || c[k] === '' ? '' : Number(c[k]).toLocaleString('vi-VN')} placeholder={ph} inputMode="numeric" onChange={e => { const v = e.target.value.replace(/\D/g, ''); set(k, v === '' ? null : Number(v)) }} />
+  const preview = normalizeCoupon({ ...c, description: '' }).description
+  const save = async e => {
+    e.preventDefault(); setBusy(true)
+    try { const r = await api.admin.saveCoupon(c, isNew); toast(`Đã lưu mã ${r.code}`); onSaved() } catch (x) { toast(x.message, 'bad') } finally { setBusy(false) }
+  }
+  return (
+    <Modal title={isNew ? 'Tạo mã giảm giá' : 'Sửa mã ' + c.code} onClose={onClose}>
+      <form onSubmit={save}>
+        <div className="form-grid">
+          <Field label="Mã *" hint={isNew ? 'Chữ không dấu, số, gạch ngang' : 'Không đổi được mã đã tạo'}>
+            <div className="row gap">
+              <input className="input" value={c.code} disabled={!isNew} onChange={e => set('code', e.target.value.toUpperCase().replace(/\s/g, ''))} maxLength={30} required />
+              {isNew && <button type="button" className="btn ghost sm" onClick={() => set('code', randomCode())}>Ngẫu nhiên</button>}
+            </div>
+          </Field>
+          <Field label="Loại giảm"><select className="input" value={c.kind} onChange={e => set('kind', e.target.value)}>{COUPON_KINDS.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}</select></Field>
+          {c.kind === 'percent' && <Field label="Giảm (%) *"><input className="input" value={c.value ?? ''} inputMode="numeric" onChange={e => set('value', e.target.value.replace(/\D/g, '').slice(0, 3))} /></Field>}
+          {c.kind === 'percent' && <Field label="Giảm tối đa (₫)" hint="Để trống = không giới hạn">{num('max_discount', 'Không giới hạn')}</Field>}
+          {c.kind === 'amount' && <Field label="Số tiền giảm (₫) *">{num('value')}</Field>}
+          <Field label="Đơn tối thiểu (₫)" hint="Tính trên tiền hàng, chưa gồm ship">{num('min_order', '0')}</Field>
+          <Field label="Tổng số lượt" hint="Để trống = không giới hạn">{num('usage_limit', 'Không giới hạn')}</Field>
+          <Field label="Mỗi khách dùng tối đa" hint="Đếm theo SĐT / tài khoản">{num('per_customer_limit', 'Không giới hạn')}</Field>
+          <Field label="Bắt đầu" hint="Để trống = dùng ngay"><input className="input" type="datetime-local" value={c.starts_at || ''} onChange={e => set('starts_at', e.target.value)} /></Field>
+          <Field label="Hết hạn" hint="Để trống = không hết hạn"><input className="input" type="datetime-local" value={c.expires_at || ''} onChange={e => set('expires_at', e.target.value)} /></Field>
+        </div>
+        <Field label="Mô tả cho khách" hint={'Để trống sẽ hiện: ' + preview}><input className="input" value={c.description} maxLength={200} placeholder={preview} onChange={e => set('description', e.target.value)} /></Field>
+        <label className="check mb"><input type="checkbox" checked={c.active} onChange={e => set('active', e.target.checked)} /> <span>Đang bật (khách dùng được)</span></label>
+        {!isNew && c.used > 0 && <p className="muted small">Mã đã dùng {c.used} lần. Sửa mức giảm chỉ áp dụng cho đơn đặt sau.</p>}
+        <div className="row gap"><button className="btn" disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu'}</button><button type="button" className="btn ghost" onClick={onClose}>Hủy</button></div>
+      </form>
+    </Modal>
+  )
+}
+
 function Customers() {
   const [list, setList] = useState(null)
   useEffect(() => { api.admin.customers().then(setList).catch(() => setList([])) }, [])
@@ -632,6 +725,7 @@ export default function Admin() {
         <NavLink end to="/quan-tri">Tổng quan</NavLink>
         <NavLink to="/quan-tri/don-hang">Đơn hàng</NavLink>
         <NavLink to="/quan-tri/san-pham">Sản phẩm</NavLink>
+        <NavLink to="/quan-tri/ma-giam-gia">Mã giảm giá</NavLink>
         <NavLink to="/quan-tri/gia-nhap">Tính giá nhập</NavLink>
         <NavLink to="/quan-tri/khach-hang">Khách hàng</NavLink>
         <ChatTab />
@@ -642,6 +736,7 @@ export default function Admin() {
         <Route index element={<Dashboard />} />
         <Route path="don-hang" element={<Orders />} />
         <Route path="san-pham" element={<Products />} />
+        <Route path="ma-giam-gia" element={<Coupons />} />
         <Route path="gia-nhap" element={<ImportCalc />} />
         <Route path="khach-hang" element={<Customers />} />
         <Route path="tin-nhan" element={<AdminChat />} />
