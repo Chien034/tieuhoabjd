@@ -191,3 +191,10 @@ test('showroom: làm sạch và bắt buộc tên, tỉnh, địa chỉ', () => 
   assert.ok(storeError(s))
   assert.equal(storeError({ ...s, address: '1 Phố Huế' }), '')
 })
+
+test('cài đặt cửa hàng: logo chỉ nhận ảnh https / ảnh nhúng, có tên hiển thị Zalo', () => {
+  assert.equal(normalizeInfo({ logo: 'https://x.supabase.co/storage/v1/object/public/san-pham/logo/a.png' }).logo, 'https://x.supabase.co/storage/v1/object/public/san-pham/logo/a.png')
+  assert.equal(normalizeInfo({ logo: 'javascript:alert(1)' }).logo, '')
+  assert.equal(normalizeInfo({ logo: '' }, { ...DEFAULT_INFO, logo: 'https://a/b.png' }).logo, '')
+  assert.equal(normalizeInfo({ zalo_name: ' Minh Nguyệt﻿ ' }).zalo_name, 'Minh Nguyệt')
+})

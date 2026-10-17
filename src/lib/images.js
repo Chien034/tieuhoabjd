@@ -1,5 +1,6 @@
 // Thu nhỏ ảnh trên trình duyệt trước khi tải lên (ảnh Taobao thường 1–3 MB, 1500–2000px).
-export async function resizeImage(file, maxSide = 1200, quality = 0.85) {
+// png: giữ nền trong suốt (dùng cho logo)
+export async function resizeImage(file, maxSide = 1200, quality = 0.85, { png = false } = {}) {
   if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error(`${file.name}: chỉ nhận ảnh JPG, PNG, WEBP`)
   const url = URL.createObjectURL(file)
   try {
@@ -8,9 +9,9 @@ export async function resizeImage(file, maxSide = 1200, quality = 0.85) {
     const c = document.createElement('canvas')
     c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k)
     const g = c.getContext('2d')
-    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height) // nền trắng cho ảnh PNG trong suốt
+    if (!png) { g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height) } // nền trắng cho ảnh PNG trong suốt
     g.drawImage(img, 0, 0, c.width, c.height)
-    return await new Promise((ok, bad) => c.toBlob(b => (b ? ok(b) : bad(new Error('Không nén được ảnh'))), 'image/jpeg', quality))
+    return await new Promise((ok, bad) => c.toBlob(b => (b ? ok(b) : bad(new Error('Không nén được ảnh'))), png ? 'image/png' : 'image/jpeg', quality))
   } finally { URL.revokeObjectURL(url) }
 }
 

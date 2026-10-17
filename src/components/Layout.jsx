@@ -15,7 +15,7 @@ function Logo() {
   const SHOP_NAME = info.name
   return (
     <Link to="/" className="logo" aria-label={SHOP_NAME + ' — Trang chủ'}>
-      <svg viewBox="0 0 64 64" width="34" height="34" aria-hidden="true"><circle cx="32" cy="28" r="16" fill="#f6dcd3" /><path d="M16 28Q16 8 32 8Q48 8 48 28Q42 18 32 21Q22 18 16 28Z" fill="#4a2c5e" /><circle cx="26" cy="29" r="2.6" fill="#d48aa8" /><circle cx="38" cy="29" r="2.6" fill="#d48aa8" /><path d="M18 58Q32 42 46 58Z" fill="#d48aa8" /></svg>
+      {info.logo ? <img className="logo-img" src={info.logo} alt="" /> : <svg viewBox="0 0 64 64" width="34" height="34" aria-hidden="true"><circle cx="32" cy="28" r="16" fill="#f6dcd3" /><path d="M16 28Q16 8 32 8Q48 8 48 28Q42 18 32 21Q22 18 16 28Z" fill="#4a2c5e" /><circle cx="26" cy="29" r="2.6" fill="#d48aa8" /><circle cx="38" cy="29" r="2.6" fill="#d48aa8" /><path d="M18 58Q32 42 46 58Z" fill="#d48aa8" /></svg>}
       <span><b>{SHOP_NAME.split(' ').slice(0, 2).join(' ')}</b><small>{SHOP_NAME.split(' ').slice(2).join(' ') || 'Doll House'}</small></span>
     </Link>
   )
@@ -176,7 +176,7 @@ function Footer() {
           <p><Icon name="phone" size={16} /> Hotline <a href={telHref(info.hotline)}><b>{info.hotline}</b></a>{info.hours && ` (${info.hours})`}</p>
           {info.address && <p className="pre-line"><Icon name="pin" size={16} /> {info.address}</p>}
           {info.email && <p>Email: <a href={'mailto:' + info.email}>{info.email}</a></p>}
-          {(info.zalo || info.facebook) && <p>{info.zalo && <a href={zaloHref(info.zalo)} target="_blank" rel="noreferrer">Zalo</a>}{info.zalo && info.facebook && ' · '}{info.facebook && <a href={info.facebook} target="_blank" rel="noreferrer">Facebook</a>}</p>}
+          {(info.zalo || info.facebook) && <p>{info.zalo && <a href={zaloHref(info.zalo)} target="_blank" rel="noreferrer">Zalo{info.zalo_name && `: ${info.zalo_name}`}</a>}{info.zalo && info.facebook && ' · '}{info.facebook && <a href={info.facebook} target="_blank" rel="noreferrer">Facebook</a>}</p>}
         </div>
         <div>
           <h4>Về chúng tôi</h4>
